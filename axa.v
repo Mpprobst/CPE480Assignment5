@@ -86,19 +86,19 @@ output out;
 
 `DATA cache_data `CACHE_LINES;
 reg `CACHE_LINES dirty;
-wire hit;
+reg `CACHE_LINES hit;
 
 // check if any line in the cache is the designated memory address 
-hit <= (cache_data[0] & mem_in) ? 1 : 0;
-hit <= (cache_data[1] & mem_in) ? 1 : 0;
-hit <= (cache_data[2] & mem_in) ? 1 : 0;
-hit <= (cache_data[3] & mem_in) ? 1 : 0;
-hit <= (cache_data[4] & mem_in) ? 1 : 0;
-hit <= (cache_data[5] & mem_in) ? 1 : 0;
-hit <= (cache_data[6] & mem_in) ? 1 : 0;
-hit <= (cache_data[7] & mem_in) ? 1 : 0;
+hit[0] <= (cache_data[0] & mem_in) ? 1 : 0;
+hit[1] <= (cache_data[1] & mem_in) ? 1 : 0;
+hit[2] <= (cache_data[2] & mem_in) ? 1 : 0;
+hit[3] <= (cache_data[3] & mem_in) ? 1 : 0;
+hit[4] <= (cache_data[4] & mem_in) ? 1 : 0;
+hit[5] <= (cache_data[5] & mem_in) ? 1 : 0;
+hit[6] <= (cache_data[6] & mem_in) ? 1 : 0;
+hit[7] <= (cache_data[7] & mem_in) ? 1 : 0;
 
-if (hit) begin
+if (|hit) begin
 // send found value to the PE
 
 end else begin
