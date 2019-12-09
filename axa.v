@@ -78,12 +78,33 @@
 // Cache values
 `define CACHE_LINES		[7:0]
 
-module cache(write, out);
+module cache(mem_in, write, out);
+input `ADDRESS mem_in;
 input write;
 output out;
 
-`DATA cache `CACHE_LINES;
+
+`DATA cache_data `CACHE_LINES;
 reg `CACHE_LINES dirty;
+wire hit;
+
+// check if any line in the cache is the designated memory address 
+hit <= (cache_data[0] & mem_in) ? 1 : 0;
+hit <= (cache_data[1] & mem_in) ? 1 : 0;
+hit <= (cache_data[2] & mem_in) ? 1 : 0;
+hit <= (cache_data[3] & mem_in) ? 1 : 0;
+hit <= (cache_data[4] & mem_in) ? 1 : 0;
+hit <= (cache_data[5] & mem_in) ? 1 : 0;
+hit <= (cache_data[6] & mem_in) ? 1 : 0;
+hit <= (cache_data[7] & mem_in) ? 1 : 0;
+
+if (hit) begin
+// send found value to the PE
+
+end else begin
+// find value in slowmem (TODO check the other cache for value)
+
+end
 
 endmodule // cache
 
