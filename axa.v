@@ -78,6 +78,13 @@
 // Cache values
 `define CACHE_LINES		[7:0]
 
+function writetocahce				//this function should be able to be used when we need to write to the cache by
+input `ADDRESS mem_addr;			//providing it a memory address and the cache line we wish to use
+input wire [3:0] cacheline;			//NOTE FUNCTION DOESN'T DO ANYTHING YET
+
+
+endfunction
+
 module cache(mem_in, write, out);
 input `ADDRESS mem_in;
 input write;
@@ -87,6 +94,8 @@ output out;
 `DATA cache_data `CACHE_LINES;
 reg `CACHE_LINES dirty;
 reg `CACHE_LINES hit;
+reg `CACHE_LINES cachedata;
+wire [3:0] replaceline				//to store cache line number we plan to replace
 
 // check if any line in the cache is the designated memory address 
 hit[0] <= (cache_data[0] & mem_in) ? 1 : 0;
@@ -100,6 +109,18 @@ hit[7] <= (cache_data[7] & mem_in) ? 1 : 0;
 
 if (|hit) begin
 // send found value to the PE
+cachedata = cachedata | hit;			//OR cachedata register with hit to update Recently used cache line
+cachedata <= (&cachedata) ? 0 : cahcedata;	//checks to see if cachedata is 11111111 os so set all bits back to zero, if not do nothing
+
+assign replaceline = (!cachedata[0]) ? 0 :	//sets replaceline to num after ? if bit is zero in cachedata
+		     (!cachedata[1]) ? 1 :	//might not be in right place should be where we dont have a hit
+		     (!cachedata[2]) ? 2 :
+		     (!cachedata[3]) ? 3 :
+		     (!cachedata[4]) ? 4 :	//should be able to call writetocache function using the
+		     (!cachedata[5]) ? 5 :	//memory address we want to use and replace line 
+		     (!cachedata[6]) ? 6 :
+		     (!cachedata[7]) ? 7;
+
 
 end else begin
 // find value in slowmem (TODO check the other cache for value)
