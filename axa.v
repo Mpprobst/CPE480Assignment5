@@ -22,6 +22,12 @@
 `define REGSIZE		[15:0]
 `define USIZE [15:0]
 
+// Cache definitions
+`define DIRTYBIT 	[15]
+`define TAG		[14]
+`define CACHEVALUE	[7:0]
+
+
 //Op values
 `define OPsys					6'b000000
 `define OPcom					6'b000001
@@ -85,17 +91,23 @@ input wire [3:0] cacheline;			//NOTE FUNCTION DOESN'T DO ANYTHING YET
 
 endfunction
 
+// when write = 1, write all dirty cache lines to memory
 module cache(mem_in, write, out);
 input `ADDRESS mem_in;
 input write;
 output out;
 
-
 `DATA cache_data `CACHE_LINES;
-reg `CACHE_LINES dirty;
 reg `CACHE_LINES hit;
 reg `CACHE_LINES cachedata;
 wire [3:0] replaceline				//to store cache line number we plan to replace
+
+if (write) begin
+	if (cache_data[0][`DIRTYBIT]) begin
+	// TODO: commit cache line to memory		
+	end
+	// TODO: do for each cache line
+end
 
 // check if any line in the cache is the designated memory address 
 hit[0] <= (cache_data[0] & mem_in) ? 1 : 0;
