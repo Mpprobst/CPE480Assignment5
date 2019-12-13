@@ -81,65 +81,143 @@
 
 `define NOP           16'b0
 
+`define LINEADDR [15:0]
+`define LINE [15:0]
+`define LINES [65535:0]
+`define MEMDELAY 4
+
+//**************************
+// SLOWMEM
+//**************************
+
+module slowmem16(rdy, rdata, addr, wdata, wtoo, strobe, clk);
+output reg rdy = 0;
+output reg `LINE rdata;
+input `LINEADDR addr;
+input `LINE wdata;
+input wtoo, strobe, clk;
+reg [7:0] busy = 0;
+reg `LINEADDR maddr;
+reg mwtoo;
+reg `LINE mwdata;
+reg `LINE m `LINES;
+
+initial begin
+	$readmemh1(m); //Data
+end
+
+always @(posedge clk) begin
+  if (busy == 1) begin
+    // complete request
+    rdata <= m[maddr];
+    if (mwtoo) m[maddr] <= mwdata;
+    busy <= 0;
+    rdy <= 1;
+  end else if (busy > 1) begin
+    // still waiting
+    busy <= busy - 1;
+  end else if (strobe) begin
+    // idle and new request
+    rdata <= 16'hxxxx;
+    maddr <= addr;
+    mwdata <= wdata;
+    mwtoo <= wtoo;
+    busy <= `MEMDELAY;
+    rdy <= 0;
+  end
+end
+endmodule
+
 // Cache values
 `define CACHE_LINES		[7:0]
-
-function writetocahce				//this function should be able to be used when we need to write to the cache by
-input `ADDRESS mem_addr;			//providing it a memory address and the cache line we wish to use
-input wire [3:0] cacheline;			//NOTE FUNCTION DOESN'T DO ANYTHING YET
-
-
-endfunction
+`define LINE_SIZE		[34:0]
+`define TRAN			[34]
+`define USED			[33]
+`define DIRTY			[32]
+`define LINE_MEMORY		[31:16]
+`define LINE_VALUE		[15:0]
 
 // when write = 1, write all dirty cache lines to memory
-module cache(mem_in, write, out);
-input `ADDRESS mem_in;
-input write;
-output out;
+//**************************
+//CACHE
+//**************************
+module cache(rdy, out, mem_in, write, reset, clk);
+output rdy;
+output [15:0] out;
+input [15:0] mem_in;
+input write, reset, clk;
 
-`DATA cache_data `CACHE_LINES;
-reg `CACHE_LINES hit;
-reg `CACHE_LINES cachedata;
-wire [3:0] replaceline				//to store cache line number we plan to replace
+reg rdy;
+reg [15:0] out;
+reg `LINE_SIZE cache_data `CACHE_LINES;
+reg [3:0] hit;
+
+wire [3:0] replaceline;				//to store cache line number we plan to replace
+
+//function writetocahce;				//this function should be able to be used when we need to write to the cache by
+//	input `ADDRESS mem_addr;			//providing it a memory address and the cache line we wish to use
+//	input [3:0] cacheline;			//NOTE FUNCTION DOESN'T DO ANYTHING YET
+
+//endfunction
+
+always @(posedge clk) begin
+rdy <= 0;
+$display("cache got: %d", mem_in);
 
 if (write) begin
-	if (cache_data[0][`DIRTYBIT]) begin
-	// TODO: commit cache line to memory		
+	if (cache_data[0]`DIRTYBIT) begin
+	// TODO: commit cache line to memory
 	end
 	// TODO: do for each cache line
 end
+cache_data[1]`LINE_MEMORY <= 1;
+cache_data[1]`LINE_VALUE <= 4;
 
-// check if any line in the cache is the designated memory address 
-hit[0] <= (cache_data[0] & mem_in) ? 1 : 0;
-hit[1] <= (cache_data[1] & mem_in) ? 1 : 0;
-hit[2] <= (cache_data[2] & mem_in) ? 1 : 0;
-hit[3] <= (cache_data[3] & mem_in) ? 1 : 0;
-hit[4] <= (cache_data[4] & mem_in) ? 1 : 0;
-hit[5] <= (cache_data[5] & mem_in) ? 1 : 0;
-hit[6] <= (cache_data[6] & mem_in) ? 1 : 0;
-hit[7] <= (cache_data[7] & mem_in) ? 1 : 0;
+$display("cache[1] = %d", cache_data[1]`LINE_MEMORY);
+if (cache_data[1]`LINE_MEMORY == mem_in) begin hit <= 1;
+end else begin hit <= 0; end
 
-if (|hit) begin
-// send found value to the PE
-cachedata = cachedata | hit;			//OR cachedata register with hit to update Recently used cache line
-cachedata <= (&cachedata) ? 0 : cahcedata;	//checks to see if cachedata is 11111111 os so set all bits back to zero, if not do nothing
+$display("value of hit = %d", hit);
+// check if any line in the cache is the designated memory address, then store cache line index in hit
+hit <= (cache_data[0]`LINE_MEMORY & mem_in) ? 1 : 0;
+hit <= (cache_data[1]`LINE_MEMORY & mem_in) ? 2 : 0;
+hit <= (cache_data[2]`LINE_MEMORY & mem_in) ? 3 : 0;
+hit <= (cache_data[3]`LINE_MEMORY & mem_in) ? 4 : 0;
+hit <= (cache_data[4]`LINE_MEMORY & mem_in) ? 5 : 0;
+hit <= (cache_data[5]`LINE_MEMORY & mem_in) ? 6 : 0;
+hit <= (cache_data[6]`LINE_MEMORY & mem_in) ? 7 : 0;
+hit <= (cache_data[7]`LINE_MEMORY & mem_in) ? 8 : 0;
 
-assign replaceline = (!cachedata[0]) ? 0 :	//sets replaceline to num after ? if bit is zero in cachedata
-		     (!cachedata[1]) ? 1 :	//might not be in right place should be where we dont have a hit
-		     (!cachedata[2]) ? 2 :
-		     (!cachedata[3]) ? 3 :
-		     (!cachedata[4]) ? 4 :	//should be able to call writetocache function using the
-		     (!cachedata[5]) ? 5 :	//memory address we want to use and replace line 
-		     (!cachedata[6]) ? 6 :
-		     (!cachedata[7]) ? 7;
+if (hit) begin 					// send found value to the PE
+$display("hit");
+	cache_data[hit-1]`USED <= 1;		//OR cachedata register with hit to update Recently used cache line
+	out <= cache_data[hit-1]`LINE_VALUE;
+	rdy <= 1;
 
+//cachedata <= (&cachedata) ? 0 : cahcedata;	//checks to see if cachedata is 11111111 os so set all bits back to zero, if not do nothing
 
+//assign replaceline = (!cachedata[0]) ? 0 :	//sets replaceline to num after ? if bit is zero in cachedata
+//		     (!cachedata[1]) ? 1 :	//might not be in right place should be where we dont have a hit
+//		     (!cachedata[2]) ? 2 :
+//		     (!cachedata[3]) ? 3 :
+//		     (!cachedata[4]) ? 4 :	//should be able to call writetocache function using the
+//		     (!cachedata[5]) ? 5 :	//memory address we want to use and replace line
+//		     (!cachedata[6]) ? 6 :
+//		     (!cachedata[7]) ? 7;
+//
 end else begin
 // find value in slowmem (TODO check the other cache for value)
+$display("miss");
+// look at slowmem
 
+rdy = 1;
 end
-
+end
 endmodule // cache
+
+//**************************
+//PROCESSOR
+//**************************
 
 module processor(halt, reset, clk);
 output reg halt;
@@ -150,7 +228,7 @@ reg `DATA datamem `SIZE;  //data memory
 reg `INSTRUCTION instrmem `SIZE;  //instruction memory
 reg `DATA pc,tpc;
 reg `DATA passreg;   //This is the temp register to hold the source NOTE: src is used in stage 3, is this needed?
-reg `INSTRUCTION ir0, ir1, ir2, ir3; //instruction registers for each stage 
+reg `INSTRUCTION ir0, ir1, ir2, ir3; //instruction registers for each stage
 reg jump;  //is jump or not
 reg branch; //is branch or not
 reg land;
@@ -162,6 +240,13 @@ reg `DATA des,des1, src,src1,src2, res;
 
 reg `DATA usp;  //This is how we will index through undo buffer
 reg `DATA u `USIZE;  //undo stack
+
+wire `DATA cache_val;	// value returned from the cache
+reg `DATA cache_mem;	// memory address to search for in the cache.
+wire write;
+wire cache_ready;
+
+cache c(cache_ready, cache_val, cache_mem, write, reset, clk);
 
 always @(reset) begin
 	halt = 0;
@@ -179,7 +264,6 @@ always @(reset) begin
 	res = 0;
 //Setting initial values
 	$readmemh0(reglist); //Registers
-	$readmemh1(datamem); //Data
 	$readmemh2(instrmem); //Instructions
 end
 
@@ -199,7 +283,7 @@ function usesdes;
 				((inst`OP >= `OPshr) && (inst `OP <= `OPdup)) ||
 				((inst`OP >= `OPbzjz) && (inst `OP <= `OPbnnjnn)) ||
 				 (inst `OP == `OPxhi) ||
-				 (inst `OP == `OPxlo) 
+				 (inst `OP == `OPxlo)
 				);
 endfunction
 
@@ -249,8 +333,8 @@ end
 end //always block
 
 //stage2: register read
-always @(posedge clk) begin  
-	if((ir1 != `NOP) && setsdes(ir2) && ((usesdes(ir1) && (ir1 `DESTREG == ir2 `DESTREG)) || (usessrc(ir1) && (ir1 `SRCREG == ir2 `DESTREG)))) begin 
+always @(posedge clk) begin
+	if((ir1 != `NOP) && setsdes(ir2) && ((usesdes(ir1) && (ir1 `DESTREG == ir2 `DESTREG)) || (usessrc(ir1) && (ir1 `SRCREG == ir2 `DESTREG)))) begin
 		wait1 = 1;
 		ir2 <= `NOP;
 	end else begin
@@ -262,8 +346,8 @@ always @(posedge clk) begin
 				`SrcTypeI4Undo: begin src2 <= ir1 `SRCREG; end
 				`SrcTypeI4: begin src2 <= ir1 `SRCREG; end
 				default: begin end
-			endcase 
-		end else begin 
+			endcase
+		end else begin
 			src2 <= ir1 `SRC8;
 		end
 		if(ir1`OPPUSH) begin
@@ -279,12 +363,17 @@ end
 always @(posedge clk) begin //should handle selection of source?
 	if(ir2 == `NOP) begin
 		ir3 <= `NOP;
+	end else if (cache_ready) begin
+		$display("cache value %d", cache_val);
+
 	end else begin
 		if(ir2 `SRCTYPE == `SrcTypeMem) begin
 			// check this PE's cache
+			cache_mem <= ir2 `SRCREG;		// send new memory address to cache
+			ir2 <= `NOP;
 			// check the other PE's cache
 			// get value from slowmem
-			src <= datamem[ir2 `SRCREG];
+			//src <= datamem[ir2 `SRCREG];
 		end else begin
 			src <=src2;
 		end
@@ -302,7 +391,7 @@ always @(posedge clk) begin
                 //des = ir3`DESTREG;
 		//src <= src1;
 		case(op4)
-	
+
 		`OPxlo: begin res = {des`WHIGH, src`WLOW ^ des`WLOW}; end
 		`OPxhi: begin res = {src`WLOW ^ des`WHIGH  , des`WLOW}; end
 		`OPllo: begin res = {{8{src[7]}}, src}; op4 <=`OPnop; end
@@ -314,7 +403,7 @@ always @(posedge clk) begin
 		`OPsub: begin res = des - src; end
 		`OProl: begin res = (des << src) |(des >> (16 - src)); end
 		`OPshr: begin res = des >> src; end
-		`OPbzjz: begin if(des==0) begin 
+		`OPbzjz: begin if(des==0) begin
 			if(ir3 `SRCTYPE == 2'b01) begin
 				branch<=1;
 			end else begin
@@ -334,7 +423,7 @@ always @(posedge clk) begin
 			end
 		end
 
-		`OPbnjn: begin if(des[15]==1) begin 
+		`OPbnjn: begin if(des[15]==1) begin
 			if(ir3 `SRCTYPE == 2'b01) begin
 				branch<=1;
 			end else begin
@@ -344,7 +433,7 @@ always @(posedge clk) begin
 			end
 		end
 
-		`OPbnnjnn: begin if(des[15]==0) begin 
+		`OPbnnjnn: begin if(des[15]==0) begin
 			if(ir3 `SRCTYPE == 2'b01) begin
 				branch<=1;
 			end else begin
@@ -368,13 +457,13 @@ always @(posedge clk) begin
                  default: begin
 			halt <= 1;
                 end
-		endcase	
+		endcase
 
 
-		if(setsdes(ir3) && !jump && !branch) begin // check if we are ready to set the des 
+		if(setsdes(ir3) && !jump && !branch) begin // check if we are ready to set the des
 			reglist[ir3 `DESTREG] = res;
 			jump <= 0;
-		end 
+		end
 	end
 end //  always
 endmodule
