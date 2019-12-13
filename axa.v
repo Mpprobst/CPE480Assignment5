@@ -86,9 +86,19 @@
 `define LINES [65535:0]
 `define MEMDELAY 4
 
-//**************************
-// SLOWMEM
-//**************************
+// Cache values
+`define CACHE_LINES		[7:0]
+`define LINE_SIZE		[34:0]
+`define TRAN			[34]
+`define USED			[33]
+`define DIRTY			[32]
+`define LINE_MEMORY		[31:16]
+`define LINE_VALUE		[15:0]
+
+
+//******************************************************
+//*						     	  	SLOWMEM16			  							 *
+//******************************************************
 
 module slowmem16(rdy, rdata, addr, wdata, wtoo, strobe, clk);
 output reg rdy = 0;
@@ -128,19 +138,11 @@ always @(posedge clk) begin
 end
 endmodule
 
-// Cache values
-`define CACHE_LINES		[7:0]
-`define LINE_SIZE		[34:0]
-`define TRAN			[34]
-`define USED			[33]
-`define DIRTY			[32]
-`define LINE_MEMORY		[31:16]
-`define LINE_VALUE		[15:0]
+//******************************************************
+//*											CACHE													 *
+//******************************************************
 
 // when write = 1, write all dirty cache lines to memory
-//**************************
-//CACHE
-//**************************
 module cache(rdy, out, mem_in, write, reset, clk);
 output rdy;
 output [15:0] out;
@@ -215,9 +217,9 @@ end
 end
 endmodule // cache
 
-//**************************
-//PROCESSOR
-//**************************
+//******************************************************
+//*											PROCESSOR											 *
+//******************************************************
 
 module processor(halt, reset, clk);
 output reg halt;
