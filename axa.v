@@ -103,6 +103,7 @@
 module slowmem16(rdy, rdata, addr, wdata, wtoo, strobe, clk);
 output reg rdy = 0;
 output reg `LINE rdata;
+
 input `LINEADDR addr;
 input `LINE wdata;
 input wtoo, strobe, clk;
@@ -139,6 +140,33 @@ end
 endmodule
 
 //******************************************************
+//*										  	ARBITOR											 *
+//******************************************************
+
+module arbitor(mem_out, val_out, wdata, wtoo, addr, mem_rdy, mem_strobe, mem_in, rdy, val_in, rdata, write, clk);
+
+output reg `DATA val_out, wdata;
+output reg `ADDRESS mem_out, addr;									// mem_out tells the caches which memory has been modified in memory so their values can be updated
+output reg mem_rdy, mem_strobe, wtoo;		// strobe = 0 when transaction is occuring
+
+input `DATA val_in, rdata;
+input `ADDRESS mem_in;
+input rdy,write, clk;
+
+always @(posedge clk) begin
+addr <= mem_in;																// mem_in is memory address from core that is being accessed in slowmem
+mem_out <= mem_in;														// address to be updated in cache is the same as the address modified in slowmem
+wdata <= val_in;															// val_in is the new value sent from updated cache to be written in slowmem
+wtoo <= write;																// write is 1 if core is doing a write operation, wtoo tells slowmem to write a value in memory. if 0, read value.
+
+mem_rdy <= rdy;																// mem_rdy tells core that the slowmem has completed its operation
+val_out <= rdata;															// val_out is value received from slowmem that is being sent to the cache
+
+end
+
+endmodule
+
+//******************************************************
 //*											CACHE													 *
 //******************************************************
 
@@ -152,83 +180,44 @@ endmodule
 `define LINE_VALUE                       [15:0]
 
 // when write = 1, write all dirty cache lines to memory
-module cache(rdy, out, mem_in, write, reset, clk);
-output rdy;
-output [15:0] out;
+/*module cache(rdy, out, mem_in, write, reset, clk);
+output reg rdy;
+output reg [15:0] out;
 input [15:0] mem_in;
 input write, reset, clk;
 
-reg rdy;
-reg [15:0] out;
 reg `LINE_SIZE cache_data `CACHE_LINES;
-reg [3:0] hit;
+reg signed [3:0] hit;
+wire mem_rdy;
+wire `DATA rdata, wdata;
+reg strobe;
 
-wire [3:0] replaceline;                                                    //to store cache line number we plan to replace
 
-//function writetocahce;                                                              //this function should be able to be used when we need to write to the cache by
-//            input `ADDRESS mem_addr;                                        //providing it a memory address and the cache line we wish to use
-//            input [3:0] cacheline;                                      //NOTE FUNCTION DOESN'T DO ANYTHING YET
-
-//endfunction
-
-always @(posedge clk) begin
-rdy <= 0;
-
-if (write) begin
-                if (cache_data[0]`DIRTYBIT) begin
-                // TODO: commit cache line to memory
-                end
-                // TODO: do for each cache line
-end
-cache_data[3]`LINE_MEMORY <= 1;
-cache_data[3]`LINE_VALUE <= 4;
-
-$display("cache[1] = %d", cache_data[1]`LINE_MEMORY);
-if (cache_data[3]`LINE_MEMORY == mem_in)
-                begin hit <= 3;
-                end
-else
-                begin hit <= 0; end
-
-$display("comparing input address: %x to cache line address: %x where result is %d", mem_in, cache_data[1]`LINE_MEMORY );
-
-if(hit>0)
-begin
-$display("Hit");
-
-                //cache_datahit `USED <= 1;                        //OR cachedata register with hit to update Recently used cache line
-                out <= cache_data[hit]`LINE_VALUE;
-                //rdy <= 1;
+// wait for value to come out of slowmem
+if (strobe && mem_rdy) begin
+	cache_data[hit]`LINE_VALUE <= rdata;
+	$display("got %d from rdata", rdata);
+	rdy <= 1;
 end
 
 
-// check if any line in the cache is the designated memory address, then store cache line index in hit
-/* hit <= (cache_data[0]`LINE_MEMORY & mem_in) ? 1 : 0;
-hit <= (cache_data[1]`LINE_MEMORY & mem_in) ? 2 : 0;
-hit <= (cache_data[2]`LINE_MEMORY & mem_in) ? 3 : 0;
-hit <= (cache_data[3]`LINE_MEMORY & mem_in) ? 4 : 0;
-hit <= (cache_data[4]`LINE_MEMORY & mem_in) ? 5 : 0;
-hit <= (cache_data[5]`LINE_MEMORY & mem_in) ? 6 : 0;
-hit <= (cache_data[6]`LINE_MEMORY & mem_in) ? 7 : 0;
-hit <= (cache_data[7]`LINE_MEMORY & mem_in) ? 8 : 0; */
-
-/* if (hit) begin                                                                  // send found value to the PE
+if (hit) begin                                                                  // send found value to the PE
 $display("hit");
                 cache_data[hit-1]`USED <= 1;                     //OR cachedata register with hit to update Recently used cache line
                 out <= cache_data[hit-1]`LINE_VALUE;
                 rdy <= 1;
 
-//cachedata <= (&cachedata) ? 0 : cahcedata;      //checks to see if cachedata is 11111111 os so set all bits back to zero, if not do nothing
+cachedata <= (&cachedata) ? 0 : cahcedata;      //checks to see if cachedata is 11111111 os so set all bits back to zero, if not do nothing
 
-//assign replaceline = (!cachedata[0]) ? 0 :            //sets replaceline to num after ? if bit is zero in cachedata
-//                                 (!cachedata[1]) ? 1 :   //might not be in right place should be where we dont have a hit
-//                                 (!cachedata[2]) ? 2 :
-//                                 (!cachedata[3]) ? 3 :
-//                                 (!cachedata[4]) ? 4 :   //should be able to call writetocache function using the
-//                                 (!cachedata[5]) ? 5 :   //memory address we want to use and replace line
-//                                 (!cachedata[6]) ? 6 :
-//                                 (!cachedata[7]) ? 7;
-//
+assign replaceline = (!cachedata[0]) ? 0 :            //sets replaceline to num after ? if bit is zero in cachedata
+                                 (!cachedata[1]) ? 1 :   //might not be in right place should be where we dont have a hit
+                                 (!cachedata[2]) ? 2 :
+                                 (!cachedata[3]) ? 3 :
+                                 (!cachedata[4]) ? 4 :   //should be able to call writetocache function using the
+                                 (!cachedata[5]) ? 5 :   //memory address we want to use and replace line
+                                 (!cachedata[6]) ? 6 :
+                                 (!cachedata[7]) ? 7;
+
 end else begin
 // find value in slowmem (TODO check the other cache for value)
 $display("miss");
@@ -236,16 +225,20 @@ $display("miss");
 
 rdy = 1;
 end */
-end
-endmodule // cache
+
 
 //******************************************************
-//*											PROCESSOR											 *
+//*												CORE							 					 *
 //******************************************************
 
-module processor(halt, reset, clk);
-output reg halt;
-input reset, clk;
+module core(halt, val_in, mem_in, write, mem_rdy, val_out, mem_out, reset, clk);
+output reg halt, write;
+output reg `DATA val_in;
+output reg `ADDRESS mem_in;
+
+input mem_rdy, reset, clk;
+input `DATA val_out;
+input `ADDRESS mem_out;
 
 reg `DATA reglist `REGSIZE;  //register file
 reg `DATA datamem `SIZE;  //data memory
@@ -265,12 +258,22 @@ reg `DATA des,des1, src,src1,src2, res;
 reg `DATA usp;  //This is how we will index through undo buffer
 reg `DATA u `USIZE;  //undo stack
 
+reg query_cache;				// when query_cache = 1, the core is requesting a value from cache
+
+// cache registers
+reg `LINE_SIZE cache_data `CACHE_LINES;
+reg signed [3:0] hit;
+wire mem_rdy;
+wire `DATA rdata, wdata;
+reg strobe;
+
+
 wire `DATA cache_val;   // value returned from the cache
 reg `DATA cache_mem; // memory address to search for in the cache.
 wire write;
 wire cache_ready;
 
-cache c(cache_ready, cache_val, cache_mem, write, reset, clk);
+//cache c(cache_ready, cache_val, cache_mem, write, reset, clk);
 
 always @(reset) begin
                 halt = 0;
@@ -286,6 +289,7 @@ always @(reset) begin
                 branch=0;
                 land=0;
                 res = 0;
+								query_cache = 0;
 //Setting initial values
                 $readmemh0(reglist); //Registers
                 $readmemh2(instrmem); //Instructions
@@ -394,12 +398,12 @@ always @(posedge clk) begin //should handle selection of source?
                                 if(ir2 `SRCTYPE == `SrcTypeMem) begin
                                                 // check this PE's cache
                                                 cache_mem <= ir2 `SRCREG;                        // send new memory address to cache
-                                                ir2 <= `NOP;
+                                                query_cache <= 1;
                                                 // check the other PE's cache
                                                 // get value from slowmem
                                                 //src <= datamem[ir2 `SRCREG];
                                 end else begin
-                                                src <=src2;
+                                                src <= src2;
                                 end
                                 des<=des1;
                                 ir3 <= ir2;
@@ -490,18 +494,70 @@ always @(posedge clk) begin
                                 end
                 end
 end //  always
+
+
+
+always @(posedge clk) begin
+hit <= 0;
+
+if (query_cache) begin
+$display("cache_mem = %d", cache_mem);
+
+if (write) begin
+                if (cache_data[0]`DIRTYBIT) begin
+                // TODO: commit cache line to memory
+                end
+                // TODO: do for each cache line
+end
+//cache_data[1]`LINE_MEMORY <= 1;
+//cache_data[1]`LINE_VALUE <= 4;		// setting test values
+
+// check if any line in the cache is the designated memory address, then store cache line index in hit
+if (cache_data[0]`LINE_MEMORY == cache_mem) begin hit <= 0; end else
+if (cache_data[1]`LINE_MEMORY == cache_mem) begin hit <= 1; end else
+if (cache_data[2]`LINE_MEMORY == cache_mem) begin hit <= 2; end else
+if (cache_data[3]`LINE_MEMORY == cache_mem) begin hit <= 3; end else
+if (cache_data[4]`LINE_MEMORY == cache_mem) begin hit <= 4; end else
+if (cache_data[5]`LINE_MEMORY == cache_mem) begin hit <= 5; end else
+if (cache_data[6]`LINE_MEMORY == cache_mem) begin hit <= 6; end else
+if (cache_data[7]`LINE_MEMORY == cache_mem) begin hit <= 7; end else begin hit <= -1; end
+
+// TODO: store which cache line was hit so that when slowmem is done, we know what line to update
+
+//
+if(hit>=0) begin
+	$display("Hit");
+	$display("value found: %d on line %d", cache_data[hit]`LINE_VALUE, hit);
+  cache_data[hit]`USED <= 1;
+  src <= cache_data[hit]`LINE_VALUE;
+end else begin
+// find value in slowmem (TODO check the other cache for value)
+	$display("miss");
+	mem_in <= cache_mem;
+	write <= 0;
+end
+end
+end
+
 endmodule
 
 module testbench;
+wire halt, write, wtoo, mem_strobe;
+wire `DATA val_in;
+wire `ADDRESS mem_in;
+wire mem_rdy, rdy;
+wire `DATA val_out, rdata;
+wire `ADDRESS mem_out;
 reg reset = 0;
 reg clk = 0;
-wire halt;
 
-processor PE(halt, reset, clk);
+core core1(halt, val_in, mem_in, write, mem_rdy, val_out, mem_out, reset, clk);
+arbitor a(mem_out, val_out, val_in, wtoo, mem_in, mem_rdy, mem_strobe, mem_in, rdy, val_in, rdata, write, clk);
+slowmem16 memory(rdy, rdata, mem_in, val_out, wtoo, mem_strobe, clk);
 
 initial begin
                 $dumpfile;
-                $dumpvars(0, PE);
+                $dumpvars(0, core1.ir0);
                 #10 reset = 1;
                 #10 reset = 0;
                 while (!halt) begin
