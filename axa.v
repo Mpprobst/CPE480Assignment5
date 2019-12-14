@@ -172,7 +172,7 @@ end
 if (arb_rdy) begin
 	wtoo <= write;																// write is 1 if core is doing a write operation, wtoo tells slowmem to write a value in memory. if 0, read value.
 	mem_strobe <= 1;
-	address <= mem_in;																// mem_in is memory address from core that is being accessed in slowmem
+	assign address = mem_in;																// mem_in is memory address from core that is being accessed in slowmem
 	$display("in arbitor addr = %d", address);
 	wdata <= val_in;															// val_in is the new value sent from updated cache to be written in slowmem
 	mem_out <= mem_in;														// address to be updated in cache is the same as the address modified in slowmem
@@ -237,7 +237,7 @@ reg [3:0] cache_state;
 
 always @(reset) begin
                 halt = 0;
-                pc = 0;
+                pc = 0;	// set to 0x8000 for core 2
                 usp=0;
                 ir1= `NOP;
                 ir2= `NOP;
@@ -517,6 +517,7 @@ case (cache_state)
 	`FLUSH: begin
 		// if there is no empty line, find one to flush
 		// check if all cache lines have been recently used
+		// if flushed line is dirty, write it to memory.
 		if (cache_data[0]`USED == 0) begin replace = 0; end else
 		if (cache_data[1]`USED == 0) begin replace = 1; end else
 		if (cache_data[2]`USED == 0) begin replace = 2; end else
@@ -576,7 +577,7 @@ endmodule // core
 module testbench;
 wire halt, write, wtoo, mem_strobe;
 wire `DATA val_in;
-wire `ADDRESS mem_in;
+wire `ADDRESS mem_in, addr;
 wire mem_rdy, rdy;
 wire `DATA val_out, rdata;
 wire `ADDRESS mem_out;
