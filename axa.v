@@ -164,7 +164,6 @@ wire [3:0] replaceline;				//to store cache line number we plan to replace
 
 always @(posedge clk) begin
 rdy <= 0;
-$display("cache got: %d", mem_in);
 
 if (write) begin
 	if (cache_data[0]`DIRTYBIT) begin
@@ -175,9 +174,10 @@ end
 cache_data[1]`LINE_MEMORY <= 1;
 cache_data[1]`LINE_VALUE <= 4;
 
-$display("cache[1] = %d", cache_data[1]`LINE_MEMORY);
 if (cache_data[1]`LINE_MEMORY == mem_in) begin hit <= 1;
 end else begin hit <= 0; end
+
+$display("comparing input address: %x to cache line address: %x where result is %d", mem_in, cache_data[1]`LINE_MEMORY );
 
 $display("value of hit = %d", hit);
 // check if any line in the cache is the designated memory address, then store cache line index in hit
