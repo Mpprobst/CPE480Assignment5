@@ -1,0 +1,37 @@
+// memory will have:
+@0000
+000f
+0001
+0002
+0003
+0f0f
+f0f0
+0008
+0010
+0018
+0001
+0101
+0100
+
+
+
+
+add $2, @$1
+add $2, @$2
+sub $2, @$3
+jnz $2, @$0	// jump to end of instructions if not zero
+add $1, @$4
+or $1, @$5 	// $1 will be ffff
+jnz $1, @$0
+add $3, @$6
+add $3, @$7
+xor $3, @$8	// will be 0 if correct
+jnz $3, @$0	
+xor $4, @$9
+xor $4, @$10
+xor $4, @$11
+add $5, @$2
+
+sys
+
+

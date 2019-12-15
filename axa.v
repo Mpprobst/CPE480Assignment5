@@ -124,7 +124,6 @@ end
 always @(posedge clk) begin
   if (busy == 1) begin
     // complete request
-		$display("in slowmem");
     rdata <= m[maddr];
     if (mwtoo) m[maddr] <= mwdata;
     busy <= 0;
@@ -134,7 +133,6 @@ always @(posedge clk) begin
     busy <= busy - 1;
   end else if (strobe) begin
     // idle and new request
-		$display("addr = %d", addr);
     rdata <= 16'hxxxx;
     maddr <= addr;
     mwdata <= wdata;
@@ -163,9 +161,11 @@ input rdy, write, clk;
 reg arb_rdy = 0;
 
 always @(posedge clk) begin
+
+mem_rdy <= rdy;																// mem_rdy tells core that the slowmem has completed its operation
+
 // also check here if in a transaction
 if (mem_in !== 16'bx) begin
-	$display("arbitor is ready, mem_in = %d", mem_in);
 	arb_rdy <= 1;
 end
 
@@ -173,12 +173,9 @@ if (arb_rdy) begin
 	wtoo <= write;																// write is 1 if core is doing a write operation, wtoo tells slowmem to write a value in memory. if 0, read value.
 	mem_strobe <= 1;
 	assign address = mem_in;																// mem_in is memory address from core that is being accessed in slowmem
-	$display("in arbitor addr = %d", address);
 	wdata <= val_in;															// val_in is the new value sent from updated cache to be written in slowmem
 	mem_out <= mem_in;														// address to be updated in cache is the same as the address modified in slowmem
 	val_out <= rdata;															// val_out is value received from slowmem that is being sent to the cache
-	mem_rdy <= rdy;																// mem_rdy tells core that the slowmem has completed its operation
-	if (mem_rdy) begin $display("val_out = %d", val_out); end
 	arb_rdy <= 0;																	// arbiter is done, so now it can wait for another transaction
 end else begin
 // do nothing
@@ -324,8 +321,10 @@ end //always block
 
 //stage2: register read
 always @(posedge clk) begin
+$display("query_cache = %d", query_cache);
                 if((ir1 != `NOP) && setsdes(ir2) && ((usesdes(ir1) && (ir1 `DESTREG == ir2 `DESTREG)) || (usessrc(ir1) && (ir1 `SRCREG == ir2 `DESTREG)))) begin
                                 wait1 = 1;
+																$display("waiting. query cache = %d", query_cache);
                                 ir2 <= `NOP;
                 end else begin
                                 wait1 = 0;
@@ -352,23 +351,30 @@ end
 //stage3: Data memory
 always @(posedge clk) begin //should handle selection of source?
                 if(ir2 == `NOP) begin
-                                ir3 <= `NOP;
+								// if slow mem has returned a value, we continue the pipeline
+								// ir2 will be a NOP if the cache is being queried
+																if (mem_rdy) begin
+																	$display("done waiting");
+																	des<=des1;
+																	ir3 <= ir2;
+																end else begin
+																	ir3 <= `NOP;
+																end
                 end else begin
                                 if(ir2 `SRCTYPE == `SrcTypeMem) begin
+																	if ()
                                                 // check this PE's cache
                                                 cache_mem <= ir2 `SRCREG;                        // send new memory address to cache
+																								$display("cache queried");
                                                 query_cache <= 1;
                                                 // check the other PE's cache
                                                 // get value from slowmem
                                                 //src <= datamem[ir2 `SRCREG];
                                 end else begin
                                                 src <= src2;
+																								des<=des1;
+								                                ir3 <= ir2;
                                 end
-																if (mem_rdy) begin
-																	$display("done waiting");
-	                                des<=des1;
-	                                ir3 <= ir2;
-																end else begin $display("waiting on memory"); end
                 end
 end
 
@@ -463,7 +469,6 @@ always @(posedge clk) begin
 case (cache_state)
 	`CACHE_STANDBY: begin
 		if (query_cache) begin cache_state <= `FIND_HIT;
-			$display("cache_mem = %d", cache_mem);
 		end
 
 	end
@@ -486,7 +491,7 @@ case (cache_state)
 	end
 
 	`HIT: begin
-		$display("Hit");
+		$display("hit");
 		$display("value found: %d on line %d", cache_data[hit]`LINE_VALUE, hit);
 		// tells arbitor to not read a value from memory
 		cache_data[hit]`USED <= 1;
@@ -499,8 +504,7 @@ case (cache_state)
 		$display("miss");
 		// find an empty cache line, or go to flush state if all used.
 		mem_in <= cache_mem;
-		$display("cache[0]LINE_INIT = %d",cache_data[0]`LINE_INIT );
-		if (cache_data[0]`LINE_INIT == 0 || cache_data[0]`LINE_INIT === 1'bx) begin replace = 0; $display("replace = %d", replace ); end else
+		if (cache_data[0]`LINE_INIT == 0 || cache_data[0]`LINE_INIT === 1'bx) begin replace = 0; end else
 		if (cache_data[1]`LINE_INIT == 0 || cache_data[1]`LINE_INIT === 1'bx) begin replace = 1; end else
 		if (cache_data[2]`LINE_INIT == 0 || cache_data[2]`LINE_INIT === 1'bx) begin replace = 2; end else
 		if (cache_data[3]`LINE_INIT == 0 || cache_data[3]`LINE_INIT === 1'bx) begin replace = 3; end else
@@ -509,7 +513,6 @@ case (cache_state)
 		if (cache_data[6]`LINE_INIT == 0 || cache_data[6]`LINE_INIT === 1'bx) begin replace = 6; end else
 		if (cache_data[7]`LINE_INIT == 0 || cache_data[7]`LINE_INIT === 1'bx) begin replace = 7; end else begin replace = -1; end
 
-		$display("in miss, replace = %d", replace);
 		if (replace >= 0) begin cache_state <= `READ; end
 		else begin cache_state <= `FLUSH; end
 		end
@@ -532,12 +535,13 @@ case (cache_state)
 
 	`READ: begin
 		if (mem_rdy) begin
-			$display("in read, mem_out = %d, val_out = %d, cacheline = %d", mem_out, val_out, replace);
+			$display("line %d gets memory location: %d with value: %d", replace, mem_out, val_out);
 
 			cache_data[replace]`USED <= 1;
 			cache_data[replace]`LINE_INIT <= 1;
 			cache_data[replace]`LINE_MEMORY <= mem_out;
 			cache_data[replace]`LINE_VALUE <= val_out;
+			query_cache <= 0;
 			cache_state <= `CACHE_STANDBY;
 		end
 		else begin
@@ -590,7 +594,7 @@ slowmem16 memory(rdy, rdata, addr, wdata, wtoo, mem_strobe, clk);
 
 initial begin
                 $dumpfile;
-                $dumpvars(0, core1.ir0);
+                $dumpvars(0, core1.ir0, core1.ir1, core1.ir2, core1.ir3);
                 #10 reset = 1;
                 #10 reset = 0;
                 while (!halt) begin
