@@ -310,9 +310,14 @@ always @(posedge clk) begin
                                                 ir1 <= `NOP;
                                                 pc <= tpc;
                 end else begin
+									if (!query_cache) begin
                                 ir0 = instrmem[tpc];
                                 ir1<= ir0;
                                 pc<= tpc+1;
+									end else begin
+										ir0 <= `NOP;
+										ir1 <= `NOP;
+									end
                 end
 end
 
@@ -321,7 +326,7 @@ end //always block
 
 //stage2: register read
 always @(posedge clk) begin
-                if((ir1 != `NOP) && setsdes(ir2) && ((usesdes(ir1) && (ir1 `DESTREG == ir2 `DESTREG)) || (usessrc(ir1) && (ir1 `SRCREG == ir2 `DESTREG)))) begin
+                if((ir1 != `NOP) && setsdes(ir2) && ((usesdes(ir1) && (ir1 `DESTREG == ir2 `DESTREG)) || (usessrc(ir1) && (ir1 `SRCREG == ir2 `DESTREG))) || query_cache) begin
 																wait1 = 1;
                                 ir2 <= `NOP;
                 end else begin
@@ -346,7 +351,10 @@ always @(posedge clk) begin
                                 ir2 <= ir1;
                 end
 end
-
+/*function query_cache;
+	input `SRCTYPE ir2 ;
+	query_cache=(ir2 `SRCTYPE == `SrcTypeMem) ? 1 :0;
+endfunction*/
 //stage3: Data memory
 always @(posedge clk) begin //should handle selection of source?
                 if(ir2 == `NOP) begin
@@ -358,6 +366,7 @@ always @(posedge clk) begin //should handle selection of source?
                                   	cache_mem <= ir2 `SRCREG;                        // send new memory address to cache
 																		$display("cache queried");
                           					query_cache <= 1;
+																		ir3 <= ir2;
   																	// check the other PE's cache
 																	end else begin
 																		ir3 <= `NOP;
