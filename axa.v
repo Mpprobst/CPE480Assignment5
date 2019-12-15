@@ -321,10 +321,8 @@ end //always block
 
 //stage2: register read
 always @(posedge clk) begin
-$display("query_cache = %d", query_cache);
                 if((ir1 != `NOP) && setsdes(ir2) && ((usesdes(ir1) && (ir1 `DESTREG == ir2 `DESTREG)) || (usessrc(ir1) && (ir1 `SRCREG == ir2 `DESTREG)))) begin
-                                wait1 = 1;
-																$display("waiting. query cache = %d", query_cache);
+																wait1 = 1;
                                 ir2 <= `NOP;
                 end else begin
                                 wait1 = 0;
@@ -344,6 +342,7 @@ $display("query_cache = %d", query_cache);
                                                 u[usp] = ir1 `DESTREG;
                                                 usp = usp+1;
                                 end
+																// TODO: we need to prevent ir2 from getting ir1 until the cache is done
                                 ir2 <= ir1;
                 end
 end
@@ -351,29 +350,22 @@ end
 //stage3: Data memory
 always @(posedge clk) begin //should handle selection of source?
                 if(ir2 == `NOP) begin
-								// if slow mem has returned a value, we continue the pipeline
-								// ir2 will be a NOP if the cache is being queried
-																if (mem_rdy) begin
-																	$display("done waiting");
-																	des<=des1;
-																	ir3 <= ir2;
-																end else begin
 																	ir3 <= `NOP;
-																end
                 end else begin
-                                if(ir2 `SRCTYPE == `SrcTypeMem) begin
-																	if ()
-                                                // check this PE's cache
-                                                cache_mem <= ir2 `SRCREG;                        // send new memory address to cache
-																								$display("cache queried");
-                                                query_cache <= 1;
-                                                // check the other PE's cache
-                                                // get value from slowmem
-                                                //src <= datamem[ir2 `SRCREG];
+                              	if(ir2 `SRCTYPE == `SrcTypeMem) begin
+																	if (!query_cache) begin
+                                  	// check this PE's cache
+                                  	cache_mem <= ir2 `SRCREG;                        // send new memory address to cache
+																		$display("cache queried");
+                          					query_cache <= 1;
+  																	// check the other PE's cache
+																	end else begin
+																		ir3 <= `NOP;
+																	end
                                 end else begin
-                                                src <= src2;
-																								des<=des1;
-								                                ir3 <= ir2;
+                                	src <= src2;
+																	des<=des1;
+								                	ir3 <= ir2;
                                 end
                 end
 end
@@ -535,12 +527,15 @@ case (cache_state)
 
 	`READ: begin
 		if (mem_rdy) begin
+			$display("done waiting");
 			$display("line %d gets memory location: %d with value: %d", replace, mem_out, val_out);
-
 			cache_data[replace]`USED <= 1;
 			cache_data[replace]`LINE_INIT <= 1;
 			cache_data[replace]`LINE_MEMORY <= mem_out;
 			cache_data[replace]`LINE_VALUE <= val_out;
+			des <= des1;
+			ir3 <= ir2;
+			src <= val_out;
 			query_cache <= 0;
 			cache_state <= `CACHE_STANDBY;
 		end
