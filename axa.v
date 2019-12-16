@@ -347,7 +347,6 @@ always @(posedge clk) begin
                                                 u[usp] = ir1 `DESTREG;
                                                 usp = usp+1;
                                 end
-																// TODO: we need to prevent ir2 from getting ir1 until the cache is done
                                 ir2 <= ir1;
                 end
 end
@@ -467,12 +466,14 @@ end //  always
 always @(posedge clk) begin
 case (cache_state)
 	`CACHE_STANDBY: begin
+	$display("standby");
 		if (query_cache && cache_mem !== 16'bx) begin cache_state <= `FIND_HIT;
 		end
 
 	end
 	`FIND_HIT: begin
 		// check if any line in the cache is the designated memory address, then store cache line index in hit
+		$display("find hit");
 		if (cache_data[0]`LINE_MEMORY == cache_mem) begin hit <= 0; $display("hit on 0"); end else
 		if (cache_data[1]`LINE_MEMORY == cache_mem) begin hit <= 1; $display("hit on 1"); end else
 		if (cache_data[2]`LINE_MEMORY == cache_mem) begin hit <= 2; $display("hit on 2"); end else
@@ -480,7 +481,7 @@ case (cache_state)
 		if (cache_data[4]`LINE_MEMORY == cache_mem) begin hit <= 4; $display("hit on 4"); end else
 		if (cache_data[5]`LINE_MEMORY == cache_mem) begin hit <= 5; $display("hit on 5"); end else
 		if (cache_data[6]`LINE_MEMORY == cache_mem) begin hit <= 6; $display("hit on 6"); end else
-		if (cache_data[7]`LINE_MEMORY == cache_mem) begin hit <= 7; $display("hit on 7"); end else begin hit <= -1; end
+		if (cache_data[7]`LINE_MEMORY == cache_mem) begin hit <= 7; $display("hit on 7"); end else begin hit <= -1; $display("no hit"); end
 
 		if(hit>=0) begin
 			cache_state <= `HIT;
@@ -520,6 +521,7 @@ case (cache_state)
 		// if there is no empty line, find one to flush
 		// check if all cache lines have been recently used
 		// if flushed line is dirty, write it to memory.
+		$display("flush");
 		if (cache_data[0]`USED == 0) begin replace = 0; end else
 		if (cache_data[1]`USED == 0) begin replace = 1; end else
 		if (cache_data[2]`USED == 0) begin replace = 2; end else
@@ -534,7 +536,7 @@ case (cache_state)
 
 	`READ: begin
 		if (mem_rdy) begin
-			$display("done waiting");
+			$display("read");
 			cache_data[replace]`USED = 1;
 			cache_data[replace]`LINE_INIT = 1;
 			cache_data[replace]`LINE_MEMORY = mem_out;
