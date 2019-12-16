@@ -73,7 +73,7 @@
 `define SrcMem                                                                7'b1001100
 `define Done 						6'b111101
 
-`define NOP         	  16'b0
+//`define NOP         	  16'b0
 
 `define LINEADDR 				[15:0]
 `define LINE 						[15:0]
@@ -92,7 +92,7 @@
 
 // cache states
 `define CACHE_STANDBY			4'b0000		// cache do nothing
-`define FIND_HIT					4'b0001		// is there a hit in the cache
+`define CHECK_HIT					4'b0001		// is there a hit in the cache
 `define HIT								4'b0010		// there is a hit, return value to core
 `define MISS							4'b0011		// find open cache line
 `define REWIND						4'b0100		// check if used bits are 1, if all are, reset them to 0
@@ -126,6 +126,7 @@ always @(posedge clk) begin
     // complete request
     rdata <= m[maddr];
     if (mwtoo) m[maddr] <= mwdata;
+		$display("maddr: %d has value: %d", maddr, m[maddr]);
     busy <= 0;
     rdy <= 1;
   end else if (busy > 1) begin
@@ -139,48 +140,60 @@ always @(posedge clk) begin
     mwtoo <= wtoo;
     busy <= `MEMDELAY;
     rdy <= 0;
-  end
+  end //else begin rdy <= 0; end
 end
 endmodule
 
 //******************************************************
-//*										  	ARBITOR											 *
+//*										  	ARBITER											 *
 //******************************************************
 
-module arbitor(mem_out, val_out, wdata, wtoo, address, mem_rdy, mem_strobe, mem_in, rdy, val_in, rdata, write, clk);
+module arbiter(mem_out, val_out, wdata, wtoo, addr, mem_rdy, mem_strobe, mem_in, rdy, val_in, rdata, write, clk);
 
 output reg `DATA val_out, wdata;
-output reg `ADDRESS mem_out;
-output reg `ADDRESS address;									// mem_out tells the caches which memory has been modified in memory so their values can be updated
-output reg mem_rdy, mem_strobe, wtoo;								// strobe = 0 when transaction is occuring
+output reg `ADDRESS mem_out;										// mem_out tells the caches which memory has been modified in memory so their values can be updated
+output reg `ADDRESS addr;
+output reg mem_rdy, mem_strobe, wtoo;						// strobe = 0 when transaction is occuring
 
 input `DATA val_in, rdata;
 input `ADDRESS mem_in;
 input rdy, write, clk;
 
 reg arb_rdy = 0;
+reg last_clk_rdy = 0;
 
 always @(posedge clk) begin
 
-mem_rdy <= rdy;																// mem_rdy tells core that the slowmem has completed its operation
-
 // also check here if in a transaction
 if (mem_in !== 16'bx) begin
-	arb_rdy <= 1;
+	arb_rdy = 1;
+end else begin
+	arb_rdy = 0;
 end
 
 if (arb_rdy) begin
-	wtoo <= write;																// write is 1 if core is doing a write operation, wtoo tells slowmem to write a value in memory. if 0, read value.
-	mem_strobe <= 1;
-	assign address = mem_in;																// mem_in is memory address from core that is being accessed in slowmem
-	wdata <= val_in;															// val_in is the new value sent from updated cache to be written in slowmem
-	mem_out <= mem_in;														// address to be updated in cache is the same as the address modified in slowmem
-	val_out <= rdata;															// val_out is value received from slowmem that is being sent to the cache
-	arb_rdy <= 0;																	// arbiter is done, so now it can wait for another transaction
+	$display("arbiter ready");
+	mem_strobe = 1;
+	wtoo = write;																// write is 1 if core is doing a write operation, wtoo tells slowmem to write a value in memory. if 0, read value.
+	addr = mem_in;																// mem_in is memory address from core that is being accessed in slowmem
+	wdata = val_in;															// val_in is the new value sent from updated cache to be written in slowmem
+	last_clk_rdy = 0;
 end else begin
 // do nothing
-	mem_strobe <= 0;
+	mem_strobe = 0;
 end
+
+if (last_clk_rdy) begin mem_rdy <= 0; end
+
+if (rdy && !last_clk_rdy) begin
+	mem_out <= addr;														// address to be updated in cache is the same as the address modified in slowmem
+	val_out <= rdata;															// val_out is value received from slowmem that is being sent to the cache
+	arb_rdy <= 0;																	// arbiter is done, so now it can wait for another transaction
+	mem_rdy <= 1;																// mem_rdy tells core that the slowmem has completed its operation
+	last_clk_rdy <= 1;
+	$display("mem is rdy");
+end
+
 end
 
 endmodule
@@ -236,10 +249,10 @@ always @(reset) begin
                 halt = 0;
                 pc = 0;	// set to 0x8000 for core 2
                 usp=0;
-                ir1= `NOP;
-                ir2= `NOP;
-                ir3= `NOP;
-                op4 = `NOP;
+                ir1= `OPnop;
+                ir2= `OPnop;
+                ir3= `OPnop;
+                op4 = `OPnop;
                 des = 0;
                 src = 0;
                 jump=0;
@@ -307,12 +320,17 @@ always @(posedge clk) begin
                                 pc<= tpc;
                 end else begin
                                 if(pendpc) begin
-                                                ir1 <= `NOP;
+                                                ir1 <= `OPnop;
                                                 pc <= tpc;
                 end else begin
+									if (!query_cache) begin
                                 ir0 = instrmem[tpc];
                                 ir1<= ir0;
                                 pc<= tpc+1;
+									end else begin
+										ir0 <= `OPnop;
+										ir1 <= `OPnop;
+									end
                 end
 end
 
@@ -321,11 +339,9 @@ end //always block
 
 //stage2: register read
 always @(posedge clk) begin
-$display("query_cache = %d", query_cache);
-                if((ir1 != `NOP) && setsdes(ir2) && ((usesdes(ir1) && (ir1 `DESTREG == ir2 `DESTREG)) || (usessrc(ir1) && (ir1 `SRCREG == ir2 `DESTREG)))) begin
-                                wait1 = 1;
-																$display("waiting. query cache = %d", query_cache);
-                                ir2 <= `NOP;
+                if((ir1 != `OPnop) && setsdes(ir2) && ((usesdes(ir1) && (ir1 `DESTREG == ir2 `DESTREG)) || (usessrc(ir1) && (ir1 `SRCREG == ir2 `DESTREG))) || query_cache) begin
+																wait1 = 1;
+                                ir2 <= `OPnop;
                 end else begin
                                 wait1 = 0;
                                 des1 <= reglist[ir1 `DESTREG];
@@ -350,37 +366,32 @@ end
 
 //stage3: Data memory
 always @(posedge clk) begin //should handle selection of source?
-                if(ir2 == `NOP) begin
-								// if slow mem has returned a value, we continue the pipeline
-								// ir2 will be a NOP if the cache is being queried
-																if (mem_rdy) begin
-																	$display("done waiting");
-																	des<=des1;
-																	ir3 <= ir2;
-																end else begin
-																	ir3 <= `NOP;
-																end
+                if(ir2 == `OPnop) begin
+																	ir3 <= `OPnop;
                 end else begin
-                                if(ir2 `SRCTYPE == `SrcTypeMem) begin
-																	if ()
-                                                // check this PE's cache
-                                                cache_mem <= ir2 `SRCREG;                        // send new memory address to cache
-																								$display("cache queried");
-                                                query_cache <= 1;
-                                                // check the other PE's cache
-                                                // get value from slowmem
-                                                //src <= datamem[ir2 `SRCREG];
+                              	if(ir2 `SRCTYPE == `SrcTypeMem) begin
+																	if (!query_cache) begin
+                                  	// check this PE's cache
+                                  	cache_mem <= ir2 `SRCREG;                        // send new memory address to cache
+																		$display("cache queried");
+																		write <= 0;
+                          					query_cache = 1;
+																		ir3 <= `OPnop;
+  																	// check the other PE's cache
+																	end else begin
+																		ir3 <= ir2;
+																	end
                                 end else begin
-                                                src <= src2;
-																								des<=des1;
-								                                ir3 <= ir2;
+                                	src <= src2;
+																	des<=des1;
+								                	ir3 <= ir2;
                                 end
                 end
 end
 
 // stage4: execute and write
 always @(posedge clk) begin
-                if (ir3 == `NOP) begin
+                if (ir3 == `OPnop) begin
                                 jump <= 0;
                 end else begin
                                 op4 = ir3 `OP;
@@ -393,13 +404,13 @@ always @(posedge clk) begin
                                 `OPllo: begin res = {{8{src[7]}}, src}; op4 <=`OPnop; end
                                 `OPlhi: begin res = {src, 8'b0}; end
                                 `OPand: begin res = des & src; end
-                                `OPor:   begin res = des | src; end
+                                `OPor:  begin res = des | src; end
                                 `OPxor: begin res = des ^ src; end
-                                `OPadd: begin res = des + src; end
-                                `OPsub: begin res = des - src; end
-                                `OProl: begin res = (des << src) |(des >> (16 - src)); end
+                                `OPadd: begin res = des + src; $display("ADD: %d + %d = %d", des, src, res); end
+                                `OPsub: begin res = des - src; $display("SUB: %d - %d = %d", des, src, res); end
+                                `OProl: begin res = (des << src) | (des >> (16 - src)); end
                                 `OPshr: begin res = des >> src; end
-                                `OPbzjz: begin if(des==0) begin
+                                `OPbzjz: begin $display("is %d zero?", des); if(des==0) begin $display("yes");
                                                 if(ir3 `SRCTYPE == 2'b01) begin
                                                                 branch<=1;
                                                 end else begin
@@ -467,110 +478,127 @@ end //  always
 
 always @(posedge clk) begin
 case (cache_state)
+
+// Cache is standing by until the processor needs a value from it.
+// When cache is no longer standing by, it immediately checks if it has the desired mem address
 	`CACHE_STANDBY: begin
-		if (query_cache) begin cache_state <= `FIND_HIT;
+	$display("standby");
+		if (query_cache && cache_mem !== 16'bx) begin
+
+			$display("looking for address: %d ", cache_mem);
+			// check if any line in the cache is the designated memory address, then store cache line index in hit
+			if (cache_data[0]`LINE_MEMORY == cache_mem) begin hit <= 0; $display("hit on 0"); end else
+			if (cache_data[1]`LINE_MEMORY == cache_mem) begin hit <= 1; $display("hit on 1"); end else
+			if (cache_data[2]`LINE_MEMORY == cache_mem) begin hit <= 2; $display("hit on 2"); end else
+			if (cache_data[3]`LINE_MEMORY == cache_mem) begin hit <= 3; $display("hit on 3"); end else
+			if (cache_data[4]`LINE_MEMORY == cache_mem) begin hit <= 4; $display("hit on 4"); end else
+			if (cache_data[5]`LINE_MEMORY == cache_mem) begin hit <= 5; $display("hit on 5"); end else
+			if (cache_data[6]`LINE_MEMORY == cache_mem) begin hit <= 6; $display("hit on 6"); end else
+			if (cache_data[7]`LINE_MEMORY == cache_mem) begin hit <= 7; $display("hit on 7"); end else begin hit <= -1; $display("no hit"); end
+			cache_state <= `CHECK_HIT;
 		end
 
 	end
-	`FIND_HIT: begin
-		// check if any line in the cache is the designated memory address, then store cache line index in hit
-		if (cache_data[0]`LINE_MEMORY == cache_mem) begin hit <= 0; end else
-		if (cache_data[1]`LINE_MEMORY == cache_mem) begin hit <= 1; end else
-		if (cache_data[2]`LINE_MEMORY == cache_mem) begin hit <= 2; end else
-		if (cache_data[3]`LINE_MEMORY == cache_mem) begin hit <= 3; end else
-		if (cache_data[4]`LINE_MEMORY == cache_mem) begin hit <= 4; end else
-		if (cache_data[5]`LINE_MEMORY == cache_mem) begin hit <= 5; end else
-		if (cache_data[6]`LINE_MEMORY == cache_mem) begin hit <= 6; end else
-		if (cache_data[7]`LINE_MEMORY == cache_mem) begin hit <= 7; end else begin hit <= -1; end
+
+// Check the value of the hit register, then handle it appropriately
+	`CHECK_HIT: begin
+
+		$display("checking hit. hit = %d", hit);
 
 		if(hit>=0) begin
-			cache_state <= `HIT;
-		end else begin
-			cache_state <= `MISS;
-		end
-	end
+			$display("hit");
+// tells arbiter to not read a value from memory
+			mem_in = 16'bx;
+			cache_data[hit]`USED = 1;
+			cache_data[hit]`LINE_INIT = 1;
+			src <= cache_data[hit]`LINE_VALUE;
 
-	`HIT: begin
-		$display("hit");
-		$display("value found: %d on line %d", cache_data[hit]`LINE_VALUE, hit);
-		// tells arbitor to not read a value from memory
-		cache_data[hit]`USED <= 1;
-		cache_data[hit]`LINE_INIT <= 1;
-		src <= cache_data[hit]`LINE_VALUE;
-		cache_state <= `REWIND;
-	end
+			$display("rewind");
 
-	`MISS: begin
-		$display("miss");
-		// find an empty cache line, or go to flush state if all used.
-		mem_in <= cache_mem;
-		if (cache_data[0]`LINE_INIT == 0 || cache_data[0]`LINE_INIT === 1'bx) begin replace = 0; end else
-		if (cache_data[1]`LINE_INIT == 0 || cache_data[1]`LINE_INIT === 1'bx) begin replace = 1; end else
-		if (cache_data[2]`LINE_INIT == 0 || cache_data[2]`LINE_INIT === 1'bx) begin replace = 2; end else
-		if (cache_data[3]`LINE_INIT == 0 || cache_data[3]`LINE_INIT === 1'bx) begin replace = 3; end else
-		if (cache_data[4]`LINE_INIT == 0 || cache_data[4]`LINE_INIT === 1'bx) begin replace = 4; end else
-		if (cache_data[5]`LINE_INIT == 0 || cache_data[5]`LINE_INIT === 1'bx) begin replace = 5; end else
-		if (cache_data[6]`LINE_INIT == 0 || cache_data[6]`LINE_INIT === 1'bx) begin replace = 6; end else
-		if (cache_data[7]`LINE_INIT == 0 || cache_data[7]`LINE_INIT === 1'bx) begin replace = 7; end else begin replace = -1; end
-
-		if (replace >= 0) begin cache_state <= `READ; end
-		else begin cache_state <= `FLUSH; end
-		end
-
-	`FLUSH: begin
-		// if there is no empty line, find one to flush
-		// check if all cache lines have been recently used
-		// if flushed line is dirty, write it to memory.
-		if (cache_data[0]`USED == 0) begin replace = 0; end else
-		if (cache_data[1]`USED == 0) begin replace = 1; end else
-		if (cache_data[2]`USED == 0) begin replace = 2; end else
-		if (cache_data[3]`USED == 0) begin replace = 3; end else
-		if (cache_data[4]`USED == 0) begin replace = 4; end else
-		if (cache_data[5]`USED == 0) begin replace = 5; end else
-		if (cache_data[6]`USED == 0) begin replace = 6; end else
-		if (cache_data[7]`USED == 0) begin replace = 7; end else begin replace = -1; end
-
-		cache_state <= `READ;
-	end
-
-	`READ: begin
-		if (mem_rdy) begin
-			$display("line %d gets memory location: %d with value: %d", replace, mem_out, val_out);
-
-			cache_data[replace]`USED <= 1;
-			cache_data[replace]`LINE_INIT <= 1;
-			cache_data[replace]`LINE_MEMORY <= mem_out;
-			cache_data[replace]`LINE_VALUE <= val_out;
+			// reset all used bits to 0 if all are 1
+			if (cache_data[0]`USED == 0) begin end else
+			if (cache_data[1]`USED == 0) begin end else
+			if (cache_data[2]`USED == 0) begin end else
+			if (cache_data[3]`USED == 0) begin end else
+			if (cache_data[4]`USED == 0) begin end else
+			if (cache_data[5]`USED == 0) begin end else
+			if (cache_data[6]`USED == 0) begin end else
+			if (cache_data[7]`USED == 0) begin end
+			else begin
+				cache_data[0]`USED <= 0;
+				cache_data[1]`USED <= 0;
+				cache_data[2]`USED <= 0;
+				cache_data[3]`USED <= 0;
+				cache_data[4]`USED <= 0;
+				cache_data[5]`USED <= 0;
+				cache_data[6]`USED <= 0;
+				cache_data[7]`USED <= 0;
+			end
+			des <= des1;
+			ir3 <= ir2;
+			src <= val_out;
 			query_cache <= 0;
 			cache_state <= `CACHE_STANDBY;
+			$display("memory: %d, value found: %d on line %d", cache_data[hit]`LINE_MEMORY, cache_data[hit]`LINE_VALUE, hit);
+
+		end else begin
+			$display("miss");
+			// find an empty cache line, or go to flush state if all used.
+			mem_in = cache_mem;
+			if (cache_data[0]`LINE_INIT == 0 || cache_data[0]`LINE_INIT === 1'bx) begin replace = 0; end else
+			if (cache_data[1]`LINE_INIT == 0 || cache_data[1]`LINE_INIT === 1'bx) begin replace = 1; end else
+			if (cache_data[2]`LINE_INIT == 0 || cache_data[2]`LINE_INIT === 1'bx) begin replace = 2; end else
+			if (cache_data[3]`LINE_INIT == 0 || cache_data[3]`LINE_INIT === 1'bx) begin replace = 3; end else
+			if (cache_data[4]`LINE_INIT == 0 || cache_data[4]`LINE_INIT === 1'bx) begin replace = 4; end else
+			if (cache_data[5]`LINE_INIT == 0 || cache_data[5]`LINE_INIT === 1'bx) begin replace = 5; end else
+			if (cache_data[6]`LINE_INIT == 0 || cache_data[6]`LINE_INIT === 1'bx) begin replace = 6; end else
+			if (cache_data[7]`LINE_INIT == 0 || cache_data[7]`LINE_INIT === 1'bx) begin replace = 7; end else begin replace = -1; end
+
+			if (replace < 0) begin
+				// if there is no empty line, find one to flush
+				// check if all cache lines have been recently used
+				// if flushed line is dirty, write it to memory. TODO
+				$display("flush");
+				if (cache_data[0]`USED == 0) begin replace = 0; end else
+				if (cache_data[1]`USED == 0) begin replace = 1; end else
+				if (cache_data[2]`USED == 0) begin replace = 2; end else
+				if (cache_data[3]`USED == 0) begin replace = 3; end else
+				if (cache_data[4]`USED == 0) begin replace = 4; end else
+				if (cache_data[5]`USED == 0) begin replace = 5; end else
+				if (cache_data[6]`USED == 0) begin replace = 6; end else
+				if (cache_data[7]`USED == 0) begin replace = 7; end else begin replace = -1; end
+			end else begin
+				cache_state <= `READ;
+			end
+		end
+	end
+
+// Cache reads a value from slow memory
+	`READ: begin
+		cache_mem <= 16'bx;
+		mem_in <= 16'bx;		// we found what we were looking for so now the arbiter needs to be told to stop
+		if (mem_rdy) begin
+			$display("read");
+			if (replace >= 0) begin
+				cache_data[replace]`USED = 1;
+				cache_data[replace]`LINE_INIT = 1;
+				cache_data[replace]`LINE_MEMORY = mem_out;
+				cache_data[replace]`LINE_VALUE = val_out;
+				des <= des1;
+				ir3 <= ir2;
+				src <= val_out;
+				query_cache <= 0;
+				cache_state <= `CACHE_STANDBY;
+
+				$display("line %d gets memory location: %d with value: %d", replace, cache_data[replace]`LINE_MEMORY, cache_data[replace]`LINE_VALUE);
+
+			end else begin
+				$display("ERROR: trying to access cache line with negative index");
+			end
 		end
 		else begin
 			cache_state <= `READ;
 		end
-	end
-
-	`REWIND: begin
-		// reset all used bits to 0 if all are 1
-		if (cache_data[0]`USED == 0) begin end else
-		if (cache_data[1]`USED == 0) begin end else
-		if (cache_data[2]`USED == 0) begin end else
-		if (cache_data[3]`USED == 0) begin end else
-		if (cache_data[4]`USED == 0) begin end else
-		if (cache_data[5]`USED == 0) begin end else
-		if (cache_data[6]`USED == 0) begin end else
-		if (cache_data[7]`USED == 0) begin end
-		else begin
-			cache_data[0]`USED <= 0;
-			cache_data[1]`USED <= 0;
-			cache_data[2]`USED <= 0;
-			cache_data[3]`USED <= 0;
-			cache_data[4]`USED <= 0;
-			cache_data[5]`USED <= 0;
-			cache_data[6]`USED <= 0;
-			cache_data[7]`USED <= 0;
-		end
-
-		cache_state <= `CACHE_STANDBY;
 	end
 
 	endcase
@@ -589,7 +617,7 @@ reg reset = 0;
 reg clk = 0;
 
 core core1(halt, val_in, mem_in, write, mem_rdy, val_out, mem_out, reset, clk);
-arbitor a(mem_out, val_out, wdata, wtoo, addr, mem_rdy, mem_strobe, mem_in, rdy, val_in, rdata, write, clk);
+arbiter a(mem_out, val_out, wdata, wtoo, addr, mem_rdy, mem_strobe, mem_in, rdy, val_in, rdata, write, clk);
 slowmem16 memory(rdy, rdata, addr, wdata, wtoo, mem_strobe, clk);
 
 initial begin
