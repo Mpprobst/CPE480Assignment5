@@ -536,22 +536,25 @@ case (cache_state)
 
 	`READ: begin
 		if (mem_rdy) begin
+
 			$display("done waiting");
-			$display("line %d gets memory location: %d with value: %d", replace, mem_out, val_out);
-			cache_data[replace]`USED <= 1;
-			cache_data[replace]`LINE_INIT <= 1;
-			cache_data[replace]`LINE_MEMORY <= mem_out;
-			cache_data[replace]`LINE_VALUE <= val_out;
-			des <= des1;
-			ir3 <= ir2;
-			src <= val_out;
-			query_cache <= 0;
-			cache_state <= `CACHE_STANDBY;
+			cache_data[replace]`USED = 1;
+			cache_data[replace]`LINE_INIT = 1;
+			cache_data[replace]`LINE_MEMORY = mem_out;
+			cache_data[replace]`LINE_VALUE = val_out;
+			des = des1;
+			ir3 = ir2;
+			src = val_out;
+			query_cache = 0;
+			cache_state = `CACHE_STANDBY;
+			$display("line %d gets memory location: %d with value: %d", replace, mem_out, cache_data[replace]`LINE_VALUE);
+
 		end
 		else begin
 			cache_state <= `READ;
 		end
 	end
+
 
 	`REWIND: begin
 		// reset all used bits to 0 if all are 1
