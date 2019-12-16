@@ -73,7 +73,7 @@
 `define SrcMem                                                                7'b1001100
 `define Done 						6'b111101
 
-`define NOP         	  16'b0
+//`define NOP         	  16'b0
 
 `define LINEADDR 				[15:0]
 `define LINE 						[15:0]
@@ -139,7 +139,7 @@ always @(posedge clk) begin
     mwtoo <= wtoo;
     busy <= `MEMDELAY;
     rdy <= 0;
-  end
+  end else begin rdy <= 0; end
 end
 endmodule
 
@@ -162,19 +162,11 @@ reg arb_rdy = 0;
 
 always @(posedge clk) begin
 
-
-if (rdy) begin
-	mem_out <= mem_in;														// address to be updated in cache is the same as the address modified in slowmem
-	val_out <= rdata;															// val_out is value received from slowmem that is being sent to the cache
-	arb_rdy <= 0;																	// arbiter is done, so now it can wait for another transaction
-	mem_rdy <= rdy;																// mem_rdy tells core that the slowmem has completed its operation
-	$display("mem is rdy");
-end
-
-$display("arbiter looking for addr: %d", mem_in);
 // also check here if in a transaction
-if (mem_in !== 16'bx && !arb_rdy) begin
-	arb_rdy <= 1;
+if (mem_in !== 16'bx) begin
+	arb_rdy = 1;
+end else begin
+	arb_rdy = 0;
 end
 
 if (arb_rdy) begin
@@ -187,6 +179,17 @@ end else begin
 // do nothing
 	mem_strobe <= 0;
 end
+
+mem_rdy <= rdy;																// mem_rdy tells core that the slowmem has completed its operation
+
+if (rdy) begin
+	mem_out <= addr;														// address to be updated in cache is the same as the address modified in slowmem
+	val_out <= rdata;															// val_out is value received from slowmem that is being sent to the cache
+	arb_rdy <= 0;																	// arbiter is done, so now it can wait for another transaction
+	mem_strobe <= 0;
+	$display("mem is rdy");
+end
+
 end
 
 endmodule
@@ -242,10 +245,10 @@ always @(reset) begin
                 halt = 0;
                 pc = 0;	// set to 0x8000 for core 2
                 usp=0;
-                ir1= `NOP;
-                ir2= `NOP;
-                ir3= `NOP;
-                op4 = `NOP;
+                ir1= `OPnop;
+                ir2= `OPnop;
+                ir3= `OPnop;
+                op4 = `OPnop;
                 des = 0;
                 src = 0;
                 jump=0;
@@ -313,7 +316,7 @@ always @(posedge clk) begin
                                 pc<= tpc;
                 end else begin
                                 if(pendpc) begin
-                                                ir1 <= `NOP;
+                                                ir1 <= `OPnop;
                                                 pc <= tpc;
                 end else begin
 									if (!query_cache) begin
@@ -321,8 +324,8 @@ always @(posedge clk) begin
                                 ir1<= ir0;
                                 pc<= tpc+1;
 									end else begin
-										ir0 <= `NOP;
-										ir1 <= `NOP;
+										ir0 <= `OPnop;
+										ir1 <= `OPnop;
 									end
                 end
 end
@@ -332,9 +335,9 @@ end //always block
 
 //stage2: register read
 always @(posedge clk) begin
-                if((ir1 != `NOP) && setsdes(ir2) && ((usesdes(ir1) && (ir1 `DESTREG == ir2 `DESTREG)) || (usessrc(ir1) && (ir1 `SRCREG == ir2 `DESTREG))) || query_cache) begin
+                if((ir1 != `OPnop) && setsdes(ir2) && ((usesdes(ir1) && (ir1 `DESTREG == ir2 `DESTREG)) || (usessrc(ir1) && (ir1 `SRCREG == ir2 `DESTREG))) || query_cache) begin
 																wait1 = 1;
-                                ir2 <= `NOP;
+                                ir2 <= `OPnop;
                 end else begin
                                 wait1 = 0;
                                 des1 <= reglist[ir1 `DESTREG];
@@ -359,8 +362,8 @@ end
 
 //stage3: Data memory
 always @(posedge clk) begin //should handle selection of source?
-                if(ir2 == `NOP) begin
-																	ir3 <= `NOP;
+                if(ir2 == `OPnop) begin
+																	ir3 <= `OPnop;
                 end else begin
                               	if(ir2 `SRCTYPE == `SrcTypeMem) begin
 																	if (!query_cache) begin
@@ -372,7 +375,7 @@ always @(posedge clk) begin //should handle selection of source?
 																		ir3 <= ir2;
   																	// check the other PE's cache
 																	end else begin
-																		ir3 <= `NOP;
+																		ir3 <= `OPnop;
 																	end
                                 end else begin
                                 	src <= src2;
@@ -384,7 +387,7 @@ end
 
 // stage4: execute and write
 always @(posedge clk) begin
-                if (ir3 == `NOP) begin
+                if (ir3 == `OPnop) begin
                                 jump <= 0;
                 end else begin
                                 op4 = ir3 `OP;
@@ -399,11 +402,11 @@ always @(posedge clk) begin
                                 `OPand: begin res = des & src; end
                                 `OPor:  begin res = des | src; end
                                 `OPxor: begin res = des ^ src; end
-                                `OPadd: begin res = des + src; end
-                                `OPsub: begin res = des - src; end
+                                `OPadd: begin res = des + src; $display("ADD: %d + %d = %d", des, src, res); end
+                                `OPsub: begin res = des - src; $display("SUB: %d - %d = %d", des, src, res); end
                                 `OProl: begin res = (des << src) | (des >> (16 - src)); end
                                 `OPshr: begin res = des >> src; end
-                                `OPbzjz: begin if(des==0) begin
+                                `OPbzjz: begin $display("is %d zero?", des); if(des==0) begin $display("yes");
                                                 if(ir3 `SRCTYPE == 2'b01) begin
                                                                 branch<=1;
                                                 end else begin
@@ -478,8 +481,7 @@ case (cache_state)
 	$display("standby");
 		if (query_cache && cache_mem !== 16'bx) begin
 
-			$display("find hit");
-			$display("looking for %d ", cache_mem);
+			$display("looking for address: %d ", cache_mem);
 			// check if any line in the cache is the designated memory address, then store cache line index in hit
 			if (cache_data[0]`LINE_MEMORY == cache_mem) begin hit <= 0; $display("hit on 0"); end else
 			if (cache_data[1]`LINE_MEMORY == cache_mem) begin hit <= 1; $display("hit on 1"); end else
@@ -569,6 +571,8 @@ case (cache_state)
 
 // Cache reads a value from slow memory
 	`READ: begin
+		cache_mem <= 16'bx;
+		mem_in <= 16'bx;		// we found what we were looking for so now the arbiter needs to be told to stop
 		if (mem_rdy) begin
 			$display("read");
 			if (replace >= 0) begin
@@ -581,9 +585,8 @@ case (cache_state)
 				src <= val_out;
 				query_cache <= 0;
 				cache_state <= `CACHE_STANDBY;
+
 				$display("line %d gets memory location: %d with value: %d", replace, cache_data[replace]`LINE_MEMORY, cache_data[replace]`LINE_VALUE);
-				cache_mem <= 16'bx;
-				mem_in <= 16'bx;		// we found what we were looking for so now the arbiter needs to be told to stop
 
 			end else begin
 				$display("ERROR: trying to access cache line with negative index");
