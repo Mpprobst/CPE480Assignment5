@@ -147,30 +147,49 @@ endmodule
 //*										  	ARBITER											 *
 //******************************************************
 
-module arbiter(mem_out, val_out, wdata, wtoo, addr, mem_rdy, mem_strobe, mem_in, rdy, val_in, rdata, write, clk);
+
+module arbiter(halt, core_id, write, mem_out, val_out, wdata, wtoo, addr, mem_rdy, mem_strobe, mem_in0, mem_in1, rdy, val_in0, val_in1, rdata, write0, write1, in_transaction0, in_transaction1, clk);
 
 output reg `DATA val_out, wdata;
 output reg `ADDRESS mem_out;
 output reg `ADDRESS addr;									// mem_out tells the caches which memory has been modified in memory so their values can be updated
-output reg mem_rdy, mem_strobe, wtoo;								// strobe = 0 when transaction is occuring
+output reg mem_rdy, mem_strobe, wtoo, halt, core_id, write;								// strobe = 0 when transaction is occuring
 
-input `DATA val_in, rdata;
-input `ADDRESS mem_in;
-input rdy, write, clk;
+input `DATA val_in0, val_in1, rdata;
+input `ADDRESS mem_in0, mem_in1;
+input rdy, write0, write1, clk, in_transaction0, in_transaction1;
 
+//reg write;
+reg `ADDRESS mem_in;
+reg `DATA val_in;
 reg arb_rdy = 0;
+reg busy = 0;
 
 always @(posedge clk) begin
 
-// also check here if in a transaction
-if (mem_in !== 16'bx) begin
+// also check here if in a transaction. whichever mem_in is not x tells us what core is making a request
+$display("mem_in0 = %d, mem_in1 = %d", mem_in0, mem_in1);
+if (!arb_rdy && (mem_in0 !== 16'bx)) begin
+	$display("request for core0");
+	core_id = 0;
 	arb_rdy = 1;
+	write = write0;
+	mem_in = mem_in0;
+	val_in = val_in0;
+end else if (!arb_rdy && (mem_in1 !== 16'bx)) begin
+$display("request for core1");
+	arb_rdy = 1;
+	core_id = 1;
+	write = write1;
+	mem_in = mem_in1;
+	val_in = val_in1;
 end else begin
 	arb_rdy = 0;
 end
 
-if (arb_rdy) begin
+if (arb_rdy && !busy) begin
 	$display("arbiter ready");
+	busy <= 1;													// we have sent a request to the slowmem, so we block out other requests for the time being
 	mem_strobe <= 1;
 	wtoo <= write;																// write is 1 if core is doing a write operation, wtoo tells slowmem to write a value in memory. if 0, read value.
 	addr <= mem_in;																// mem_in is memory address from core that is being accessed in slowmem
@@ -188,6 +207,10 @@ if (rdy) begin
 	val_out <= rdata;															// val_out is value received from slowmem that is being sent to the cache
 	arb_rdy <= 0;																	// arbiter is done, so now it can wait for another transaction
 	mem_strobe <= 0;
+	busy <= 0;												// transaction complete, so we can accept another transaction once we get the data from slowmem
+	if (!write) begin
+		write <= 1'bx;
+	end
 	$display("mem is rdy");
 end
 
@@ -199,13 +222,13 @@ endmodule
 //*												CORE							 					 *
 //******************************************************
 
-module core(halt, val_in, mem_in, write, mem_rdy, val_out, mem_out, reset, clk);
-output reg halt, write;
+module core(killswitch, halt, in_transaction, val_in, mem_in, write, mem_rdy, val_out, mem_out, reset, clk, core_id_in, pc_offset);
+output reg killswitch, halt, write, in_transaction;
 output reg `DATA val_in;
 output reg `ADDRESS mem_in;
 
-input mem_rdy, reset, clk;
-input `DATA val_out;
+input mem_rdy, reset, clk, core_id_in;
+input `DATA val_out, pc_offset;
 input `ADDRESS mem_out;
 
 reg `DATA reglist `REGSIZE;  //register file
@@ -244,7 +267,7 @@ reg [3:0] cache_state;
 
 always @(reset) begin
                 halt = 0;
-                pc = 0;	// set to 0x8000 for core 2
+                pc = pc_offset;	// set to 0x8000 for core 2
                 usp=0;
                 ir1= `OPnop;
                 ir2= `OPnop;
@@ -259,6 +282,8 @@ always @(reset) begin
                 res = 0;
 								query_cache = 0;
 								cache_state = `CACHE_STANDBY;
+								in_transaction = 0;
+								killswitch = 0;
 //Setting initial values
                 $readmemh0(reglist); //Registers
                 $readmemh2(instrmem); //Instructions
@@ -473,7 +498,22 @@ always @(posedge clk) begin
 																`OPex: begin res <= src; $display("exchanging %d with %d at addr: ", src, des, reglist[ir3 `SRCREG]); end
 
                                 `OPfail: begin if (!jump && !branch) begin // fail after a branch still gets executed. this prevents the fail in those cases
-                                                halt <= 1;
+																								case (src)
+																								4'h1: begin
+																									$display("SIGILL");
+																								end
+																								4'h2: begin
+																									$display("SIGTMV");
+																									in_transaction <= 1;
+																								end
+																								4'h4: begin
+																									$display("SIGCHK");
+																								end
+																								4'h8: begin
+																									$display("SIGLEX");
+																								end
+																								endcase
+
                         end
                         end
                                 `OPsys: begin if (!jump && !branch) begin // sys after a branch still gets executed. this prevents the fail in those cases
@@ -537,7 +577,9 @@ always @(posedge clk) begin
 																	// tells arbiter to not read a value from memory
 																				cache_data[hit]`USED = 1;
 																				cache_data[hit]`LINE_INIT = 1;
-
+																				if (in_transaction) begin
+																					cache_data[hit]`TRAN <= 1;
+																				end
 																				// reset all used bits to 0 if all are 1
 																				if (cache_data[0]`USED == 0) begin end else
 																				if (cache_data[1]`USED == 0) begin end else
@@ -601,11 +643,13 @@ always @(posedge clk) begin
 
 																					write <= 1;
 																					val_in <= cache_data[replace]`LINE_VALUE;
-																					cache_state <= `READ;
 																					$display("storing the value: %d into mem addr: %d", cache_data[replace]`LINE_VALUE, cache_data[replace]`LINE_MEMORY);
-																				end else begin
-																					cache_state <= `READ;
 																				end
+																				if (in_transaction) begin
+																					cache_data[replace]`TRAN <= 1;
+																				end
+																				cache_state <= `READ;
+
 																			end
 																		end
 
@@ -616,6 +660,26 @@ always @(posedge clk) begin
 																			if (mem_rdy) begin
 																				$display("read");
 																				if (replace >= 0) begin
+
+																				// check if memory
+											// core0 has a pc offset of 0. if arbiter tells us request came from core1, then we must look to see if the mem_out of the request is in this cache
+																					if (in_transaction && ((core_id_in && pc_offset == 16'h0000) || (!core_id_in && pc_offset == 16'h80000))) begin
+																						if (cache_data[0]`LINE_MEMORY == mem_out) begin hit <= 0; end else
+																						if (cache_data[1]`LINE_MEMORY == mem_out) begin hit <= 1; end else
+																						if (cache_data[2]`LINE_MEMORY == mem_out) begin hit <= 2; end else
+																						if (cache_data[3]`LINE_MEMORY == mem_out) begin hit <= 3; end else
+																						if (cache_data[4]`LINE_MEMORY == mem_out) begin hit <= 4; end else
+																						if (cache_data[5]`LINE_MEMORY == mem_out) begin hit <= 5; end else
+																						if (cache_data[6]`LINE_MEMORY == mem_out) begin hit <= 6; end else
+																						if (cache_data[7]`LINE_MEMORY == mem_out) begin hit <= 7; end else begin hit <= -1; end
+
+																						if (hit >= 0) begin
+																							killswitch <= 1;
+																							$display("Memory transaction violation");
+																						end
+																					end
+																					end
+
 																					cache_data[replace]`USED = 0;
 																					cache_data[replace]`LINE_INIT = 1;
 																					cache_data[replace]`LINE_MEMORY = mem_out;
@@ -650,18 +714,18 @@ always @(posedge clk) begin
 endmodule // core
 
 module testbench;
-wire halt, write, wtoo, mem_strobe, mem_rdy, rdy;
-wire `DATA val_in, wdata, val_out, rdata;
-wire `ADDRESS mem_in, addr, mem_out;
-
+wire halt0, halt1, core_id, in_transaction0, in_transaction1, write0, write1, wtoo, mem_strobe, mem_rdy, rdy;
+wire `DATA val_in0, val_in1, wdata, val_out, rdata;
+wire `ADDRESS mem_in0, mem_in1, addr, mem_out;
 
 reg reset = 0;
 reg clk = 0;
+wire killswitch = 0;
 
-core core1(halt, val_in, mem_in, write, mem_rdy, val_out, mem_out, reset, clk);
+core core1(killswitch, halt0, in_transaction0, val_in0, mem_in0, write0, mem_rdy, val_out, mem_out, reset, clk, core_id, 16'h0000);
+core core2(killswitch, halt1, in_transaction1, val_in1, mem_in1, write1, mem_rdy, val_out, mem_out, reset, clk, core_id, 16'h8000);
 
-
-arbiter a(mem_out, val_out, wdata, wtoo, addr, mem_rdy, mem_strobe, mem_in, rdy, val_in, rdata, write, clk);
+arbiter a(halt, core_id, write, mem_out, val_out, wdata, wtoo, addr, mem_rdy, mem_strobe, mem_in0, mem_in1, rdy, val_in0, val_in1, rdata, write0, write1, in_transaction0, in_transaction1, clk);
 slowmem16 memory(rdy, rdata, addr, wdata, wtoo, mem_strobe, clk);
 
 initial begin
@@ -670,7 +734,7 @@ initial begin
 								$dumpvars(0, core1.cache_data[0], core1.cache_data[1], core1.cache_data[2], core1.cache_data[3], core1.cache_data[4], core1.cache_data[5], core1.cache_data[6], core1.cache_data[7]);
 								#10 reset = 1;
                 #10 reset = 0;
-                while (!halt) begin
+                while ((!halt1 || !halt0) && !killswitch) begin
                                 #10 clk = 1;
                                 #10 clk = 0;
                 end
