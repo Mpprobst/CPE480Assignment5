@@ -232,7 +232,6 @@ input `DATA val_out, pc_offset;
 input `ADDRESS mem_out;
 
 reg `DATA reglist `REGSIZE;  //register file
-reg `DATA datamem `SIZE;  //data memory
 reg `INSTRUCTION instrmem `SIZE;  //instruction memory
 reg `DATA pc,tpc;
 reg `DATA passreg;   //This is the temp register to hold the source NOTE: src is used in stage 3, is this needed?
@@ -654,16 +653,16 @@ always @(posedge clk) begin
 																		end
 
 																	// Cache reads a value from slow memory
-																		`READ: begin
+																		`READ: begin // 1
 																			cache_mem <= 16'bx;
 																			mem_in <= 16'bx;		// we found what we were looking for so now the arbiter needs to be told to stop
-																			if (mem_rdy) begin
+																			if (mem_rdy) begin // 2
 																				$display("read");
-																				if (replace >= 0) begin
+																				if (replace >= 0) begin // 3
 
 																				// check if memory
 											// core0 has a pc offset of 0. if arbiter tells us request came from core1, then we must look to see if the mem_out of the request is in this cache
-																					if (in_transaction && ((core_id_in && pc_offset == 16'h0000) || (!core_id_in && pc_offset == 16'h80000))) begin
+																					if (in_transaction && ((core_id_in && pc_offset == 16'h0000) || (!core_id_in && pc_offset == 16'h80000))) begin // 4
 																						if (cache_data[0]`LINE_MEMORY == mem_out) begin hit <= 0; end else
 																						if (cache_data[1]`LINE_MEMORY == mem_out) begin hit <= 1; end else
 																						if (cache_data[2]`LINE_MEMORY == mem_out) begin hit <= 2; end else
@@ -673,32 +672,32 @@ always @(posedge clk) begin
 																						if (cache_data[6]`LINE_MEMORY == mem_out) begin hit <= 6; end else
 																						if (cache_data[7]`LINE_MEMORY == mem_out) begin hit <= 7; end else begin hit <= -1; end
 
-																						if (hit >= 0) begin
+																						if (hit >= 0) begin // 5
 																							killswitch <= 1;
 																							$display("Memory transaction violation");
-																						end
-																					end
-																					end
+																						end // 5
+																					end // 4
 
 																					cache_data[replace]`USED = 0;
 																					cache_data[replace]`LINE_INIT = 1;
 																					cache_data[replace]`LINE_MEMORY = mem_out;
 																					cache_data[replace]`LINE_VALUE = val_out;
 																					des <= des1;
-																					if (ir_stalled != `OPnop) begin
+																					if (ir_stalled != `OPnop) begin // 6
 																						ir3 <= ir_stalled;
-																					end
+																					end // 6
 																					src <= val_out;
 																					query_cache <= 0;
 																					cache_state <= `CACHE_STANDBY;
 
 																					$display("line %d gets memory location: %d with value: %d", replace, cache_data[replace]`LINE_MEMORY, cache_data[replace]`LINE_VALUE);
 
-																				end else begin
+																				end  // 3
+																				else begin // 7
 																					$display("ERROR: trying to access cache line with negative index");
 																				end
 																			end
-																			else begin
+																			else begin // 8
 																				cache_state <= `READ;
 																			end
 																		end
