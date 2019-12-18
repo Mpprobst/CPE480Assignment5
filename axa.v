@@ -168,33 +168,32 @@ reg busy = 0;
 always @(posedge clk) begin
 
 // also check here if in a transaction. whichever mem_in is not x tells us what core is making a request
-$display("mem_in0 = %d, mem_in1 = %d", mem_in0, mem_in1);
+//$display("mem_in0 = %d, mem_in1 = %d", mem_in0, mem_in1);
 if (!arb_rdy && (mem_in0 !== 16'bx)) begin
-	$display("request for core0");
-	core_id = 0;
-	arb_rdy = 1;
+	//$display("request for core0");
+	core_id <= 0;
+	arb_rdy <= 1;
 	write = write0;
 	mem_in = mem_in0;
 	val_in = val_in0;
 end else if (!arb_rdy && (mem_in1 !== 16'bx)) begin
-$display("request for core1");
-	arb_rdy = 1;
-	core_id = 1;
+//$display("request for core1");
+	arb_rdy <= 1;
+	core_id <= 1;
 	write = write1;
 	mem_in = mem_in1;
 	val_in = val_in1;
-end else begin
-	arb_rdy = 0;
 end
 
+//$display("arb_rdy = %d, busy = %d", arb_rdy, busy	);
 if (arb_rdy && !busy) begin
-	$display("arbiter ready");
+	//if (!core_id && (mem_in ))
 	busy <= 1;													// we have sent a request to the slowmem, so we block out other requests for the time being
 	mem_strobe <= 1;
 	wtoo <= write;																// write is 1 if core is doing a write operation, wtoo tells slowmem to write a value in memory. if 0, read value.
 	addr <= mem_in;																// mem_in is memory address from core that is being accessed in slowmem
 	wdata <= val_in;															// val_in is the new value sent from updated cache to be written in slowmem
-	$display("sending to slowmem: wtoo=%d, addr=%d, wdata=%d", write, mem_in, val_in);
+	//$display("sending to slowmem: wtoo=%d, addr=%d, wdata=%d", write, mem_in, val_in);
 end else begin
 // do nothing
 	mem_strobe <= 0;
@@ -208,10 +207,10 @@ if (rdy) begin
 	arb_rdy <= 0;																	// arbiter is done, so now it can wait for another transaction
 	mem_strobe <= 0;
 	busy <= 0;												// transaction complete, so we can accept another transaction once we get the data from slowmem
+
 	if (!write) begin
 		write <= 1'bx;
 	end
-	$display("mem is rdy");
 end
 
 end
@@ -263,6 +262,7 @@ reg `DATA cache_mem; // memory address to search for in the cache.
 wire cache_ready;
 
 reg [3:0] cache_state;
+reg internal_id;
 
 always @(reset) begin
                 halt = 0;
@@ -283,6 +283,8 @@ always @(reset) begin
 								cache_state = `CACHE_STANDBY;
 								in_transaction = 0;
 								killswitch = 0;
+								if (pc_offset == 16'h0000) begin internal_id = 0; end
+								else begin internal_id = 1; end
 //Setting initial values
                 $readmemh0(reglist); //Registers
                 $readmemh2(instrmem); //Instructions
@@ -365,7 +367,6 @@ end //always block
 always @(posedge clk) begin
                 if(query_cache || branch || jump || (ir1 != `OPnop) && setsdes(ir2) && ((usesdes(ir1) && (ir1 `DESTREG == ir2 `DESTREG)) || (usessrc(ir1) && (ir1 `SRCREG == ir2 `DESTREG)))) begin
 																wait1 = 1;
-																//$display("wait bc query = %d branch = %d", query_cache, branch);
                                 ir2 <= `OPnop;
                 end else begin
                                 wait1 = 0;
@@ -400,17 +401,17 @@ always @(posedge clk) begin //should handle selection of source?
                               	if(ir2 `SRCTYPE == `SrcTypeMem) begin								// if the src is a memory address, get it from cache.
 																	if (!query_cache) begin
 	                                  	// check this PE's cache
-	                                  	cache_mem <= ir2 `SRCREG;                       // send new memory address to cache
-																			$display("cache queried");
+	                                  	cache_mem = ir2 `SRCREG;                       // send new memory address to cache
+																			//$display("cache queried");
 	                          					query_cache = 1;
 																			//if (branch || jump) begin
 																			//	ir_stalled <= `OPnop;
 																			//end else begin
 																				ir_stalled <= ir2;
 																				if (ir2`OP == `OPex) begin
-																					$display("exchange");
+																					//$display("exchange");
 																					write <= 1;
-																					$display("reg %d has value %d", ir2`SRCREG, reglist[ir2`SRCREG]);
+																					//$display("reg %d has value %d", ir2`SRCREG, reglist[ir2`SRCREG]);
 																					val_in <= reglist[ir2`SRCREG];
 																				end else begin
 																					write <= 0;																			// write is only 1 when flushing a dirty line, or during an ex instruction
@@ -445,14 +446,14 @@ always @(posedge clk) begin
                                 `OPxhi: begin res = {src`WLOW ^ des`WHIGH  , des`WLOW}; end
                                 `OPllo: begin res = {{8{src[7]}}, src}; op4 <=`OPnop; end
                                 `OPlhi: begin res = {src, 8'b0}; end
-                                `OPand: begin res = des & src; $display("ADD: %d & %d = %d", des, src, res); end
-                                `OPor:  begin res = des | src; $display("OR: %d | %d = %d", des, src, res); end
-                                `OPxor: begin res = des ^ src; $display("XOR: %d ^ %d = %d", des, src, res); end
-                                `OPadd: begin res = des + src; $display("ADD: %d + %d = %d", des, src, res); end
-                                `OPsub: begin res = des - src; $display("SUB: %d - %d = %d", des, src, res); end
-                                `OProl: begin res = (des << src) | (des >> (16 - src)); end
-                                `OPshr: begin res = des >> src; end
-                                `OPbzjz: begin $display("is %d zero?", des); if(des==0) begin $display("yes");
+                                `OPand: begin res = des & src; $display("core%d AND: %d & %d = %d", internal_id, des, src, res); end
+                                `OPor:  begin res = des | src; $display("core%d OR: %d | %d = %d", internal_id, des, src, res); end
+                                `OPxor: begin res = des ^ src; $display("core%d XOR: %d ^ %d = %d", internal_id, des, src, res); end
+                                `OPadd: begin res = des + src; $display("core%d ADD: %d + %d = %d", internal_id, des, src, res); end
+                                `OPsub: begin res = des - src; $display("core%d SUB: %d - %d = %d", internal_id, des, src, res); end
+                                `OProl: begin res = (des << src) | (des >> (16 - src)); $display("core%d ROL: %d << %d = %d", internal_id, des, src, res); end
+                                `OPshr: begin res = des >> src; $display("core%d SHR: %d >> %d = %d", internal_id, des, src, res); end
+                                `OPbzjz: begin $display("is %d in core%d zero?", des, internal_id); if(des==0) begin $display("yes");
                                                 if(ir3 `SRCTYPE == 2'b01) begin
                                                                 branch<=1;
                                                 end else begin
@@ -494,7 +495,7 @@ always @(posedge clk) begin
 
                                 `OPdup: begin res = src; end
                                 //`OPex: begin res <= src; datamem[reglist[ir3 `SRCREG]] <= des; end  // LEGACY
-																`OPex: begin res <= src; $display("exchanging %d with %d at addr: ", src, des, reglist[ir3 `SRCREG]); end
+																`OPex: begin res <= src; $display("core%d exchanging %d with %d at addr: ", core_id_in, src, des, reglist[ir3 `SRCREG]); end
 
                                 `OPfail: begin if (!jump && !branch) begin // fail after a branch still gets executed. this prevents the fail in those cases
 																								case (src)
@@ -511,12 +512,14 @@ always @(posedge clk) begin
 																								4'h8: begin
 																									$display("SIGLEX");
 																								end
-																								endcase
+
+																	`OPcom: begin $display("core%d com", core_id_in); in_transaction <= 0; end
+																endcase
 
                         end
                         end
                                 `OPsys: begin if (!jump && !branch) begin // sys after a branch still gets executed. this prevents the fail in those cases
-                        $display("sys call");
+                        $display("core%d sys call", internal_id);
                                                 halt <= 1;
                         end
                         end
@@ -548,10 +551,10 @@ always @(posedge clk) begin
 																	// Cache is standing by until the processor needs a value from it.
 																	// When cache is no longer standing by, it immediately checks if it has the desired mem address
 																		`CACHE_STANDBY: begin
-																		$display("standby");
+																			mem_in = 16'hx;
 																			if (query_cache && cache_mem !== 16'bx) begin
+																			$display("core%d looking for address: %d ", internal_id, cache_mem);
 
-																				$display("looking for address: %d ", cache_mem);
 																				// check if any line in the cache is the designated memory address, then store cache line index in hit
 																				if (cache_data[0]`LINE_MEMORY == cache_mem) begin hit <= 0; end else
 																				if (cache_data[1]`LINE_MEMORY == cache_mem) begin hit <= 1; end else
@@ -569,10 +572,9 @@ always @(posedge clk) begin
 																	// Check the value of the hit register, then handle it appropriately
 																		`CHECK_HIT: begin
 
-																			$display("checking hit. hit = %d", hit);
-
 																			if(hit>=0) begin
-																				$display("hit");
+																				$display("core%d hit on line %d", internal_id, hit);
+
 																	// tells arbiter to not read a value from memory
 																				cache_data[hit]`USED = 1;
 																				cache_data[hit]`LINE_INIT = 1;
@@ -589,7 +591,7 @@ always @(posedge clk) begin
 																				if (cache_data[6]`USED == 0) begin end else
 																				if (cache_data[7]`USED == 0) begin end
 																				else begin
-																					$display("rewind");
+																					$display("core%d setting used bits to 0", internal_id);
 
 																					cache_data[0]`USED <= 0;
 																					cache_data[1]`USED <= 0;
@@ -601,20 +603,22 @@ always @(posedge clk) begin
 																					cache_data[7]`USED <= 0;
 																				end
 																				if (write) begin
-																					mem_in <= cache_mem;
+																					mem_in = cache_mem;
 																					cache_state <= `READ;
 																				end else begin
 																					mem_in <= 16'bx;
-																					des <= des1;
+																					//des <= des1;
+																					des <= reglist[ir_stalled`DESTREG];
 																					ir3 <= ir_stalled;
 																					src <= cache_data[hit]`LINE_VALUE;
 																					query_cache <= 0;
 																					cache_state <= `CACHE_STANDBY;
-																					$display("memory: %d, value found: %d on line %d", cache_data[hit]`LINE_MEMORY, cache_data[hit]`LINE_VALUE, hit);
+																					$display("core%d memory: %d, value found: %d on line %d", internal_id, cache_data[hit]`LINE_MEMORY, cache_data[hit]`LINE_VALUE, hit);
 																				end
 
 																			end else begin
-																				$display("miss");
+																			$display("core%d miss", internal_id);
+
 																				// find an empty cache line, or go to flush state if all used.
 																				mem_in = cache_mem;
 																				if (cache_data[0]`LINE_INIT == 0 || cache_data[0]`LINE_INIT === 1'bx) begin replace = 0; end else
@@ -630,7 +634,6 @@ always @(posedge clk) begin
 																					// if there is no empty line, find one to flush
 																					// check if all cache lines have been recently used
 																					// if flushed line is dirty, write it to memory. TODO
-																					$display("flush");
 																					if (cache_data[0]`USED == 0) begin replace = 0; end else
 																					if (cache_data[1]`USED == 0) begin replace = 1; end else
 																					if (cache_data[2]`USED == 0) begin replace = 2; end else
@@ -640,9 +643,12 @@ always @(posedge clk) begin
 																					if (cache_data[6]`USED == 0) begin replace = 6; end else
 																					if (cache_data[7]`USED == 0) begin replace = 7; end else begin replace = -1; end
 
+																					$display("core%d replacing lru line %d", internal_id, replace);
+
 																					write <= 1;
 																					val_in <= cache_data[replace]`LINE_VALUE;
-																					$display("storing the value: %d into mem addr: %d", cache_data[replace]`LINE_VALUE, cache_data[replace]`LINE_MEMORY);
+
+																					$display("core%d storing the value: %d into mem addr: %d", internal_id, cache_data[replace]`LINE_VALUE, cache_data[replace]`LINE_MEMORY);
 																				end
 																				if (in_transaction) begin
 																					cache_data[replace]`TRAN <= 1;
@@ -653,16 +659,24 @@ always @(posedge clk) begin
 																		end
 
 																	// Cache reads a value from slow memory
-																		`READ: begin // 1
-																			cache_mem <= 16'bx;
-																			mem_in <= 16'bx;		// we found what we were looking for so now the arbiter needs to be told to stop
-																			if (mem_rdy) begin // 2
-																				$display("read");
-																				if (replace >= 0) begin // 3
+																		`READ: begin
+
+																		// if this core has sent a memory address to the arbiter, we can set mem_in to x
+
+																			if (!core_id_in && (pc_offset == 16'h0000)) begin
+																				mem_in <= 16'hx;
+																			end
+
+																			if (core_id_in && (pc_offset == 16'h8000)) begin
+																				mem_in <= 16'hx;
+																			end
+
+																			if (mem_rdy) begin
+																				if (replace >= 0) begin
 
 																				// check if memory
 											// core0 has a pc offset of 0. if arbiter tells us request came from core1, then we must look to see if the mem_out of the request is in this cache
-																					if (in_transaction && ((core_id_in && pc_offset == 16'h0000) || (!core_id_in && pc_offset == 16'h80000))) begin // 4
+																					if (in_transaction && ((core_id_in && pc_offset == 16'h0000) || (!core_id_in && pc_offset == 16'h8000))) begin
 																						if (cache_data[0]`LINE_MEMORY == mem_out) begin hit <= 0; end else
 																						if (cache_data[1]`LINE_MEMORY == mem_out) begin hit <= 1; end else
 																						if (cache_data[2]`LINE_MEMORY == mem_out) begin hit <= 2; end else
@@ -672,32 +686,60 @@ always @(posedge clk) begin
 																						if (cache_data[6]`LINE_MEMORY == mem_out) begin hit <= 6; end else
 																						if (cache_data[7]`LINE_MEMORY == mem_out) begin hit <= 7; end else begin hit <= -1; end
 
-																						if (hit >= 0) begin // 5
+																						if (hit >= 0) begin
 																							killswitch <= 1;
 																							$display("Memory transaction violation");
-																						end // 5
-																					end // 4
+																						end
+																					end
 
-																					cache_data[replace]`USED = 0;
-																					cache_data[replace]`LINE_INIT = 1;
-																					cache_data[replace]`LINE_MEMORY = mem_out;
-																					cache_data[replace]`LINE_VALUE = val_out;
-																					des <= des1;
-																					if (ir_stalled != `OPnop) begin // 6
-																						ir3 <= ir_stalled;
-																					end // 6
-																					src <= val_out;
-																					query_cache <= 0;
-																					cache_state <= `CACHE_STANDBY;
+																				// only accept the value from the arbiter if the process was for this core
+																				//$display("core_id = %d, pc_offset = %x", core_id_in, pc_offset);
+																				if (!core_id_in && (pc_offset == 16'h0000)) begin
+																						cache_data[replace]`USED = 0;
+																						cache_data[replace]`LINE_INIT = 1;
+																						cache_data[replace]`LINE_MEMORY = mem_out;
+																						cache_data[replace]`LINE_VALUE = val_out;
 
-																					$display("line %d gets memory location: %d with value: %d", replace, cache_data[replace]`LINE_MEMORY, cache_data[replace]`LINE_VALUE);
+																						if (ir_stalled != `OPnop) begin
+																							ir3 <= ir_stalled;
+																							//des <= des1;
+																							des <= reglist[ir_stalled`DESTREG];
+																						end
+																						src <= val_out;
+																						query_cache <= 0;
+																						cache_mem <= 16'bx;
+																						mem_in = 16'bx;		// we found what we were looking for so now the arbiter needs to be told to stop
+																						cache_state <= `CACHE_STANDBY;
 
-																				end  // 3
-																				else begin // 7
+																						$display("core 0: line %d gets memory location: %d with value: %d", replace, cache_data[replace]`LINE_MEMORY, cache_data[replace]`LINE_VALUE);
+																					end
+																				 if (core_id_in && (pc_offset == 16'h8000)) begin
+																							cache_data[replace]`USED = 0;
+																							cache_data[replace]`LINE_INIT = 1;
+																							cache_data[replace]`LINE_MEMORY = mem_out;
+																							cache_data[replace]`LINE_VALUE = val_out;
+
+
+																							if (ir_stalled != `OPnop) begin
+																								ir3 <= ir_stalled;
+																								//des <= des1;
+																								des <= reglist[ir_stalled`DESTREG];
+																							end
+																							src <= val_out;
+																							query_cache <= 0;
+																							cache_mem <= 16'bx;
+																							mem_in <= 16'bx;		// we found what we were looking for so now the arbiter needs to be told to stop
+																							cache_state <= `CACHE_STANDBY;
+
+																							$display("core 1: line %d gets memory location: %d with value: %d", replace, cache_data[replace]`LINE_MEMORY, cache_data[replace]`LINE_VALUE);
+																						end
+
+																				end
+																				else begin
 																					$display("ERROR: trying to access cache line with negative index");
 																				end
 																			end
-																			else begin // 8
+																			else begin
 																				cache_state <= `READ;
 																			end
 																		end
