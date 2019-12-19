@@ -91,13 +91,10 @@
 `define LINE_VALUE			[15:0]
 
 // cache states
-`define CACHE_STANDBY			4'b0000		// cache do nothing
-`define CHECK_HIT					4'b0001		// is there a hit in the cache
-`define HIT								4'b0010		// there is a hit, return value to core
-`define MISS							4'b0011		// find open cache line
-`define REWIND						4'b0100		// check if used bits are 1, if all are, reset them to 0
-`define READ							4'b0101		// fill an empty cache line from slowmem
-`define FLUSH							4'b0111 	// if no empty lines, flush one
+`define CACHE_STANDBY			2'b00		// cache do nothing
+`define CHECK_HIT					2'b01		// is there a hit in the cache
+`define READ							2'b10		// fill an empty cache line from slowmem
+`define WRITE_ALL					2'b11
 
 
 //******************************************************
@@ -261,8 +258,11 @@ wire `DATA cache_val;   // value returned from the cache
 reg `DATA cache_mem; // memory address to search for in the cache.
 wire cache_ready;
 
-reg [3:0] cache_state;
-reg internal_id;
+reg [1:0] cache_state;
+reg internal_id;				// used to identify one core from another
+reg trans_write;				// set to 0 when a transaction occurs and we need to commit the cache to memory
+
+reg [7:0] ex_hit; 			// used to determine which cache line to modify when doing ex instruction
 
 always @(reset) begin
                 halt = 0;
@@ -282,6 +282,7 @@ always @(reset) begin
 								query_cache = 0;
 								cache_state = `CACHE_STANDBY;
 								in_transaction = 0;
+								trans_write = 1;
 								killswitch = 0;
 								if (pc_offset == 16'h0000) begin internal_id = 0; end
 								else begin internal_id = 1; end
@@ -495,7 +496,24 @@ always @(posedge clk) begin
 
                                 `OPdup: begin res = src; end
                                 //`OPex: begin res <= src; datamem[reglist[ir3 `SRCREG]] <= des; end  // LEGACY
-																`OPex: begin res <= src; $display("core%d exchanging %d with %d at addr: ", core_id_in, src, des, reglist[ir3 `SRCREG]); end
+																`OPex: begin res <= src;
+
+																	$display("des = %d", mem_out);
+																	if (cache_data[0]`LINE_MEMORY == mem_out) begin ex_hit = 0; end else
+																	if (cache_data[1]`LINE_MEMORY == mem_out) begin ex_hit = 1; end else
+																	if (cache_data[2]`LINE_MEMORY == mem_out) begin ex_hit = 2; end else
+																	if (cache_data[3]`LINE_MEMORY == mem_out) begin ex_hit = 3; end else
+																	if (cache_data[4]`LINE_MEMORY == mem_out) begin ex_hit = 4; end else
+																	if (cache_data[5]`LINE_MEMORY == mem_out) begin ex_hit = 5; end else
+																	if (cache_data[6]`LINE_MEMORY == mem_out) begin ex_hit = 6; end else
+																	if (cache_data[7]`LINE_MEMORY == mem_out) begin ex_hit = 7; end
+
+																	res <= cache_data[ex_hit]`LINE_VALUE;
+																	cache_data[ex_hit]`LINE_VALUE <= des;
+																	cache_data[ex_hit]`DIRTY <= 1;
+
+																	$display("$time ex on line %d", ex_hit);
+																$display("core%d exchanging %d with %d at addr: ", core_id_in, src, des, reglist[ir3 `SRCREG]); end
 
                                 `OPfail: begin if (!jump && !branch) begin // fail after a branch still gets executed. this prevents the fail in those cases
 																								case (src)
@@ -505,6 +523,7 @@ always @(posedge clk) begin
 																								4'h2: begin
 																									$display("SIGTMV");
 																									in_transaction <= 1;
+																									trans_write <= 0;
 																								end
 																								4'h4: begin
 																									$display("SIGCHK");
@@ -552,7 +571,21 @@ always @(posedge clk) begin
 																	// When cache is no longer standing by, it immediately checks if it has the desired mem address
 																		`CACHE_STANDBY: begin
 																			mem_in = 16'hx;
-																			if (query_cache && cache_mem !== 16'bx) begin
+
+																			if (!trans_write) begin
+																			// set all dirty bits to 1 so that we know when we are done writing the whole cache
+																				cache_data[0]`DIRTY <= 1;
+																				cache_data[1]`DIRTY <= 1;
+																				cache_data[2]`DIRTY <= 1;
+																				cache_data[3]`DIRTY <= 1;
+																				cache_data[4]`DIRTY <= 1;
+																				cache_data[5]`DIRTY <= 1;
+																				cache_data[6]`DIRTY <= 1;
+																				cache_data[7]`DIRTY <= 1;
+																				trans_write <= 1;
+																				// cache_state <= `WRITE_ALL;
+
+																			end else if (query_cache && cache_mem !== 16'bx) begin
 																			$display("core%d looking for address: %d ", internal_id, cache_mem);
 
 																				// check if any line in the cache is the designated memory address, then store cache line index in hit
@@ -675,6 +708,7 @@ always @(posedge clk) begin
 																				if (replace >= 0) begin
 
 																				// check if memory
+																				//$display("in_transaction = %d, core_id_in = %d, internal_id  = %d", in_transaction, core_id_in, internal_id);
 											// core0 has a pc offset of 0. if arbiter tells us request came from core1, then we must look to see if the mem_out of the request is in this cache
 																					if (in_transaction && ((core_id_in && pc_offset == 16'h0000) || (!core_id_in && pc_offset == 16'h8000))) begin
 																						if (cache_data[0]`LINE_MEMORY == mem_out) begin hit <= 0; end else
@@ -711,7 +745,7 @@ always @(posedge clk) begin
 																						mem_in = 16'bx;		// we found what we were looking for so now the arbiter needs to be told to stop
 																						cache_state <= `CACHE_STANDBY;
 
-																						$display("core 0: line %d gets memory location: %d with value: %d", replace, cache_data[replace]`LINE_MEMORY, cache_data[replace]`LINE_VALUE);
+																						$display("core0 line %d gets memory location: %d with value: %d", replace, cache_data[replace]`LINE_MEMORY, cache_data[replace]`LINE_VALUE);
 																					end
 																				 if (core_id_in && (pc_offset == 16'h8000)) begin
 																							cache_data[replace]`USED = 0;
@@ -731,7 +765,7 @@ always @(posedge clk) begin
 																							mem_in <= 16'bx;		// we found what we were looking for so now the arbiter needs to be told to stop
 																							cache_state <= `CACHE_STANDBY;
 
-																							$display("core 1: line %d gets memory location: %d with value: %d", replace, cache_data[replace]`LINE_MEMORY, cache_data[replace]`LINE_VALUE);
+																							$display("core1 line %d gets memory location: %d with value: %d", replace, cache_data[replace]`LINE_MEMORY, cache_data[replace]`LINE_VALUE);
 																						end
 
 																				end
@@ -742,6 +776,33 @@ always @(posedge clk) begin
 																			else begin
 																				cache_state <= `READ;
 																			end
+																		end
+
+																			`WRITE_ALL: begin
+
+																				if (mem_rdy) begin
+																					if (cache_data[0]`DIRTY) begin hit <= 0; end else
+																					if (cache_data[1]`DIRTY) begin hit <= 1; end else
+																					if (cache_data[2]`DIRTY) begin hit <= 2; end else
+																					if (cache_data[3]`DIRTY) begin hit <= 3; end else
+																					if (cache_data[4]`DIRTY) begin hit <= 4; end else
+																					if (cache_data[5]`DIRTY) begin hit <= 5; end else
+																					if (cache_data[6]`DIRTY) begin hit <= 6; end else
+																					if (cache_data[7]`DIRTY) begin hit <= 7; end else begin hit <= -1; end
+
+																					if (hit >= 0) begin
+																						// write
+																						mem_in <= cache_data[hit]`LINE_MEMORY;
+																						val_in <= cache_data[hit]`LINE_VALUE;
+
+																						$display("core%d writes line %d to memory", internal_id, hit);
+																						cache_state <= `WRITE_ALL;
+																					end else begin
+																						trans_write <= 1;
+																						cache_state <= `CACHE_STANDBY;
+																					end
+																				end
+
 																		end
 
 																		endcase // cache
